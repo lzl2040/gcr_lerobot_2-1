@@ -1,0 +1,18 @@
+{
+    "kuka" : "kuka_lerobot/",
+    "dobbe": "dobbe_lerobot/",
+    "bridge_orig": "bridge_orig_lerobot/",
+    "furniture_bench_dataset_converted_externally_to_rlds": "furniture_bench_dataset_lerobot/",
+    "fmb_dataset": "fmb_dataset_lerobot/",
+    "austin_sailor_dataset_converted_externally_to_rlds": "austin_sailor_dataset_lerobot/",
+    "austin_sirius_dataset_converted_externally_to_rlds": "austin_sirius_dataset_lerobot/",
+    "dlr_edan_shared_control_converted_externally_to_rlds": "dlr_edan_shared_control_lerobot/",
+    "iamlab_cmu_pickup_insert_converted_externally_to_rlds": "iamlab_cmu_pickup_insert_lerobot/",
+    "berkeley_fanuc_manipulation": "berkeley_fanuc_manipulation_lerobot/",
+    "cmu_stretch": "cmu_stretch_lerobot/",
+    "nyu_franka_play_dataset_converted_externally_to_rlds": "nyu_franka_play_dataset_lerobot/",
+    "ucsd_kitchen_dataset_converted_externally_to_rlds": "ucsd_kitchen_dataset_lerobot/",
+    "utaustin_mutex": "utaustin_mutex_lerobot/",
+    "austin_buds_dataset_converted_externally_to_rlds": "austin_buds_dataset_lerobot/",
+    "agibot_alpha": "agibotworld_3/"
+}

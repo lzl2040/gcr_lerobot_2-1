@@ -1,0 +1,16 @@
+compute_environment: LOCAL_MACHINE
+distributed_type: DEEPSPEED
+downcast_bf16: 'no'
+gpu_ids: all
+main_process_ip: null
+main_training_function: main
+num_machines: 1
+num_processes: null  # 自动检测可用GPU数量
+rdzv_backend: static
+same_network: false
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false
+fsdp_config: {}
+megatron_lm_config: {}
