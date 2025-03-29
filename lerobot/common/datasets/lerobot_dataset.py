@@ -1353,8 +1353,8 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         
         print(included_datasets, sample_weights)
         # get dataset and dataset length
-        parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
-        # parent_dir = "/data_16T/lerobot_openx/"
+        # parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
+        parent_dir = "/data_16T/lerobot_openx/"
         self.datasets = []
         self.dataset_sizes = []
         self.dataset_names = []
@@ -1433,7 +1433,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                                   "observation.images.secondary", 
                                   "observation.images.wrist"] # follow https://github.com/openvla/openvla/blob/main/prismatic/vla/datasets/rlds/oxe/configs.py
         self.stats = aggregate_multi_stats(self.datasets, self.dataset_names, self.max_action_dim) # Note: I modified this function
-        print(f"Aggregated stats:{self.stats}")
+        # print(f"Aggregated stats:{self.stats}")
         # update meta_features
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - meta features: {meta_features}")
         new_obs_image_keys = []
@@ -1446,7 +1446,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         old_keys = list(meta_features.keys())
         print("\n\n")
         for key in old_keys:
-            print(key, meta_features[key])
+            # print(key, meta_features[key])
             if meta_features[key]["dtype"] in ["image", "video"]:
                 img_feats = meta_features[key]
                 del meta_features[key]

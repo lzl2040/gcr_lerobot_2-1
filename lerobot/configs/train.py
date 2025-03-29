@@ -66,6 +66,8 @@ class TrainPipelineConfig(HubMixin):
         self.checkpoint_path = None
 
     def validate(self):
+        if self.log_dir is None:
+            self.log_dir = "logs"
         if not self.device:
             logging.warning("No device specified, trying to infer device automatically")
             device = auto_select_torch_device()

@@ -89,7 +89,7 @@ def update_policy(
 ) -> tuple[MetricsTracker, dict]:
     
     batch = {k: v.to(model_engine.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()
     loss, output_dict = model_engine(batch)
 
     model_engine.backward(loss)
@@ -125,12 +125,12 @@ def train(cfg: TrainPipelineConfig):
     # Dataset setup
     dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
                            seed=cfg.seed, 
-                           # data_mix="oxe_magic_soup_plus",
-                           data_mix="env_in_simpler",
+                           data_mix="oxe_magic_soup_plus",
+                            # data_mix="env_in_simpler",
                            vla2root_json="vla2root.json")
     # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
     #                        seed=cfg.seed, data_mix="oxe_magic_soup_plus",
-    #                        vla2root_json="vla2root_bak.json")
+    #                        vla2root_json="vla2root_bak_single.json")
     logger.info(f"Dataset: {dataset}")
 
     # Policy setup

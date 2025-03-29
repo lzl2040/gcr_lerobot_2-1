@@ -15,6 +15,6 @@
         "reduce_scatter": true,
         "reduce_bucket_size": 4e8,
         "allgather_bucket_size": 5e8,
-        "round_robin_gradients": true
+        "round_robin_gradients": false
     }
 }
