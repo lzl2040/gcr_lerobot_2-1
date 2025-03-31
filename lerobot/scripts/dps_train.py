@@ -16,6 +16,7 @@
 import logging
 import time
 import os
+import json
 from pathlib import Path
 from datetime import datetime
 from contextlib import nullcontext
@@ -29,6 +30,7 @@ import torch
 from termcolor import colored
 from torch import distributed as dist
 from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import DataLoader
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.transforms import ImageTransforms
@@ -189,11 +191,21 @@ def train(cfg: TrainPipelineConfig):
             seed=cfg.seed
         )
 
+    with open(cfg.deepspeed, 'r') as f:
+        deepspeed_configs_in_dict = json.load(f)
+    batch_size = deepspeed_configs_in_dict['train_micro_batch_size_per_gpu']
+    dataloader = DataLoader(dataset=dataset,
+                            batch_size=batch_size,
+                            sampler=sampler,
+                            num_workers=8,
+                            pin_memory=True,
+                            persistent_workers=True,
+                            prefetch_factor=4
+                            )
     # DeepSpeed initialization
-    model_engine, optimizer, dataloader, lr_scheduler = deepspeed.initialize(
+    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
         model=policy,
         optimizer=optimizer,
-        training_data=dataset,
         lr_scheduler=lr_scheduler,
         config=cfg.deepspeed,
         model_parameters=policy.parameters(),
