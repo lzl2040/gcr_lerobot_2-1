@@ -35,6 +35,7 @@ def decode_video_frames_torchvision(
     tolerance_s: float,
     backend: str = "pyav",
     log_loaded_timestamps: bool = False,
+    return_all: bool = False,
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video
 
@@ -70,6 +71,8 @@ def decode_video_frames_torchvision(
     # set the first and last requested timestamps
     # Note: previous timestamps are usually loaded, since we need to access the previous key frame
     first_ts = min(timestamps)
+    if return_all:
+        first_ts = min(first_ts, 0.0)
     last_ts = max(timestamps)
 
     # access closest key frame of the first requested frame
@@ -94,37 +97,48 @@ def decode_video_frames_torchvision(
 
     reader = None
 
-    query_ts = torch.tensor(timestamps)
-    loaded_ts = torch.tensor(loaded_ts)
+    if not return_all:
+        query_ts = torch.tensor(timestamps)
+        loaded_ts = torch.tensor(loaded_ts)
 
-    # compute distances between each query timestamp and timestamps of all loaded frames
-    dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
-    min_, argmin_ = dist.min(1)
+        # compute distances between each query timestamp and timestamps of all loaded frames
+        dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
+        min_, argmin_ = dist.min(1)
 
-    is_within_tol = min_ < tolerance_s
-    assert is_within_tol.all(), (
-        f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
-        "It means that the closest frame that can be loaded from the video is too far away in time."
-        "This might be due to synchronization issues with timestamps during data collection."
-        "To be safe, we advise to ignore this item during training."
-        f"\nqueried timestamps: {query_ts}"
-        f"\nloaded timestamps: {loaded_ts}"
-        f"\nvideo: {video_path}"
-        f"\nbackend: {backend}"
-    )
+        is_within_tol = min_ < tolerance_s
+        assert is_within_tol.all(), (
+            f"One or several query timestamps unexpectedly violate the tolerance ({min_[~is_within_tol]} > {tolerance_s=})."
+            "It means that the closest frame that can be loaded from the video is too far away in time."
+            "This might be due to synchronization issues with timestamps during data collection."
+            "To be safe, we advise to ignore this item during training."
+            f"\nqueried timestamps: {query_ts}"
+            f"\nloaded timestamps: {loaded_ts}"
+            f"\nvideo: {video_path}"
+            f"\nbackend: {backend}"
+        )
 
-    # get closest frames to the query timestamps
-    closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
-    closest_ts = loaded_ts[argmin_]
+        # get closest frames to the query timestamps
+        closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
+        closest_ts = loaded_ts[argmin_]
 
-    if log_loaded_timestamps:
-        logging.info(f"{closest_ts=}")
+        if log_loaded_timestamps:
+            logging.info(f"{closest_ts=}")
 
-    # convert to the pytorch format which is float32 in [0,1] range (and channel first)
-    closest_frames = closest_frames.type(torch.float32) / 255
+        # convert to the pytorch format which is float32 in [0,1] range (and channel first)
+        # closest_frames = closest_frames.type(torch.float32) / 255
 
-    assert len(timestamps) == len(closest_frames)
-    return closest_frames
+        assert len(timestamps) == len(closest_frames)
+        
+        return closest_frames
+    else:
+        loaded_ts = torch.tensor(loaded_ts)
+        closest_frames = torch.stack(loaded_frames)
+        # closest_frames = closest_frames.type(torch.float32) / 255
+        
+        if log_loaded_timestamps:
+            logging.info(f"{loaded_ts=}")
+        
+        return closest_frames
 
 
 def encode_video_frames(

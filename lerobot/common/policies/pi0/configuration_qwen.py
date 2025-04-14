@@ -8,9 +8,11 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 
 
-@PreTrainedConfig.register_subclass("pi0")
+@PreTrainedConfig.register_subclass("qwen")
 @dataclass
-class PI0Config(PreTrainedConfig):
+class QwenConfig(PreTrainedConfig):
+    
+    qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
     # Input / output structure.
     n_obs_steps: int = 1
     chunk_size: int = 50
@@ -44,22 +46,23 @@ class PI0Config(PreTrainedConfig):
     use_delta_joint_actions_aloha: bool = False
 
     # Tokenizer
-    tokenizer_max_length: int = 48
+    tokenizer_max_length: int = 100
 
     # Projector
-    proj_width: int = 1024
+    proj_width: int = 1536
 
     # Decoding
     num_steps: int = 100
 
     # Attention utils
     use_cache: bool = True
-    attention_implementation: str = "eager"  # or fa2, flex
+    attention_implementation: str = "fa2"  # or eager, flex
 
     # Finetuning settings
     freeze_vision_encoder: bool = False
-    train_expert_only: bool = True
+    train_expert_only: bool = False
     train_state_proj: bool = True
+    train_from_scratch: bool = True
 
     # Training presets
     optimizer_lr: float = 2e-5

@@ -50,17 +50,21 @@ policy = Pi0Policy.from_pretrained("lerobot/pi0")
 """
 
 import math
+import numpy as np
 from collections import deque
 
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoProcessor
+
+from qwen_vl_utils import process_vision_info
+from PIL import Image
 
 from lerobot.common.constants import ACTION, OBS_ROBOT
 from lerobot.common.policies.normalize import Normalize, Unnormalize
-from lerobot.common.policies.pi0.configuration_pi0 import PI0Config
-from lerobot.common.policies.pi0.paligemma_with_expert import (
+from lerobot.common.policies.pi0.configuration_qwen import QwenConfig
+from lerobot.common.policies.pi0.qwen_with_expert import (
     PaliGemmaWithExpertConfig,
     PaliGemmaWithExpertModel,
 )
@@ -218,15 +222,16 @@ def aloha_gripper_from_angular_inv(value):
     return normalize(value, min_val=0.4, max_val=1.5)
 
 
-class PI0Policy(PreTrainedPolicy):
+
+class QwenPolicy(PreTrainedPolicy):
     """Wrapper class around PI0FlowMatching model to train and run inference within LeRobot."""
 
-    config_class = PI0Config
-    name = "pi0"
+    config_class = QwenConfig
+    name = "qwen"
 
     def __init__(
         self,
-        config: PI0Config,
+        config: QwenConfig,
         dataset_stats: dict[str, dict[str, Tensor]] | None = None,
     ):
         """
@@ -247,15 +252,21 @@ class PI0Policy(PreTrainedPolicy):
         self.unnormalize_outputs = Unnormalize(
             config.output_features, config.normalization_mapping, dataset_stats
         )
-
-        tokenizer_path = "/data_16T/lerobot_openx/paligemma-3b-pt-224/"
-        tokenizer_path = "/mnt/wangxiaofa/RDT_module_params/paligemma-3b-pt-224/"
-        self.language_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-        self.model = PI0FlowMatching(config)
+        
+        processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
+        self.model = QwenFlowMatching(config)
+        self.processor = AutoProcessor.from_pretrained(processor_path)
         
         self.dtype = torch.bfloat16
 
         self.reset()
+        if config.train_from_scratch:
+            print(f"Training from scratch, loading qwen2.5 vl weights from {config.qwen_path}.")
+            self.init_load(config.qwen_path)
+        
+    def init_load(self, path):
+        """Load the model weights from a checkpoint."""
+        self.model.init_load(path)
 
     def reset(self):
         """This should be called whenever the environment is reset."""
@@ -312,24 +323,23 @@ class PI0Policy(PreTrainedPolicy):
             batch[ACTION] = self._pi_aloha_encode_actions_inv(batch[ACTION])
 
         # 先归一化，然后再pad
-        batch = self.normalize_inputs(batch)
-        batch = self.normalize_targets(batch)
-
-        images, img_masks = self.prepare_images(batch)
-        state = self.prepare_state(batch)
-        lang_tokens, lang_masks = self.prepare_language(batch)
+        # batch = self.normalize_inputs(batch)
+        # batch = self.normalize_targets(batch)
+        
+        input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts = self.prepare_input(batch)
+        
         actions = self.prepare_action(batch)
+        actions = self.convert_to_dtype(actions)
         actions_is_pad = batch.get("actions_id_pad")
         
-        images = [self.convert_to_dtype(img) for img in images]
-        lang_tokens = self.convert_to_dtype(lang_tokens)
+        state = self.prepare_state(batch)
         state = self.convert_to_dtype(state)
-        actions = self.convert_to_dtype(actions)
+        
         noise = self.convert_to_dtype(noise)
         time = self.convert_to_dtype(time)
 
         loss_dict = {}
-        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
+        losses = self.model.forward(input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts, state, actions, noise, time)
         loss_dict["losses_after_forward"] = losses.clone()
 
         if actions_is_pad is not None:
@@ -358,11 +368,13 @@ class PI0Policy(PreTrainedPolicy):
         """Apply Pi0 preprocessing to the images, like resizing to 224x224 and padding to keep aspect ratio, and
         convert pixel range from [0.0, 1.0] to [-1.0, 1.0] as requested by SigLIP.
         """
-        images = []
-        img_masks = []
+        
+        visions = {
+            "image": [],
+        }
 
         present_img_keys = [key for key in self.config.image_features if key in batch]
-        missing_img_keys = [key for key in self.config.image_features if key not in batch]
+        # missing_img_keys = [key for key in self.config.image_features if key not in batch]
 
         if len(present_img_keys) == 0:
             raise ValueError(
@@ -371,51 +383,162 @@ class PI0Policy(PreTrainedPolicy):
 
         # Preprocess image features present in the batch
         for key in present_img_keys:
-            img = batch[key]
+            img_seq = batch[key]
+            bsize = img_seq.shape[0]
+            device = img_seq.device
+            videos = []
+            imgs = []
+            # print(f"key: {key}, shape: {img_seq.shape}")
+            # If the image sequence is a list, it means we have a video
+            if img_seq.ndim == 5:
+                video = []
+                for i in range(bsize):
+                    for j in range(img_seq.shape[1]):
+                        img = img_seq[i][j]
+                        img = img.cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
+                        # print(img.shape)
+                        img_pil = Image.fromarray(img)
+                        video.append(img_pil)
+                    videos.append(video)
+                visions["video"] = videos
+            else:
+                for i in range(bsize):
+                    img = img_seq[i].cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
+                    # print(img.shape)
+                    img = Image.fromarray(img)
+                    imgs.append(img)
+                visions["image"].append(imgs)
+                    
+            
+        #     img = batch[key]
 
-            if self.config.resize_imgs_with_padding is not None:
-                img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
+        #     if self.config.resize_imgs_with_padding is not None:
+        #         img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
 
-            # Normalize from range [0,1] to [-1,1] as expected by siglip
-            img = img * 2.0 - 1.0
+        #     # Normalize from range [0,1] to [-1,1] as expected by siglip
+        #     img = img * 2.0 - 1.0
 
-            bsize = img.shape[0]
-            device = img.device
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
-            images.append(img)
-            img_masks.append(mask)
+        #     bsize = img.shape[0]
+        #     device = img.device
+        #     mask = torch.ones(bsize, dtype=torch.bool, device=device)
+        #     images.append(img)
+        #     img_masks.append(mask)
 
-        # Create image features not present in the batch
-        # as fully 0 padded images.
-        for num_empty_cameras in range(len(missing_img_keys)):
-            if num_empty_cameras >= self.config.empty_cameras:
-                break
-            img = torch.ones_like(img) * -1
-            mask = torch.zeros_like(mask)
-            images.append(img)
-            img_masks.append(mask)
+        # # Create image features not present in the batch
+        # # as fully 0 padded images.
+        # for num_empty_cameras in range(len(missing_img_keys)):
+        #     if num_empty_cameras >= self.config.empty_cameras:
+        #         break
+        #     img = torch.ones_like(img) * -1
+        #     mask = torch.zeros_like(mask)
+        #     images.append(img)
+        #     img_masks.append(mask)
 
-        return images, img_masks
+        return visions, bsize, device
 
     def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
         """Tokenize the text input"""
-        device = batch[OBS_ROBOT].device
+        
+        def apply_template(text):
+            message = [
+                {"role": "user",
+                "content": [
+                    {
+                        "type": "video",
+                        "video": None,
+                    },
+                    {
+                        "type": "image",
+                        "image": None,    
+                    },
+                    {
+                        "type": "image",
+                        "image": None,    
+                    },
+                    {"type": "text", "text": text},
+                ],}
+            ]
+            return self.processor.apply_chat_template(
+                message, tokenize=False, add_generation_prompt=True
+            )
+        # device = batch[OBS_ROBOT].device
         tasks = batch["task"]
 
         # PaliGemma prompt has to end with a new line
-        tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
+        # tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
+        
+        # Qwen2.5VL prompt uses a chat template
+        tasks = [apply_template(task) for task in tasks]
 
-        tokenized_prompt = self.language_tokenizer.__call__(
-            tasks,
-            padding="max_length",
-            padding_side="right",
-            max_length=self.config.tokenizer_max_length,
+        # tokenized_prompt = self.language_tokenizer.__call__(
+        #     tasks,
+        #     padding="max_length",
+        #     padding_side="right",
+        #     max_length=self.config.tokenizer_max_length,
+        #     return_tensors="pt",
+        # )
+        # lang_tokens = tokenized_prompt["input_ids"].to(device=device)
+        # lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
+
+        # return lang_tokens, lang_masks
+        
+        return tasks
+    
+    def prepare_input(self, batch):
+        """Prepare the input for the model"""
+        tasks = self.prepare_language(batch)
+        visions, bsize, device = self.prepare_images(batch)
+        texts = batch["task"]
+        messages = []
+        for i in range(bsize):
+            message = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "video",
+                            "video": visions["video"][i],
+                        },
+                        {"type": "text", "text": texts[i]},
+                    ],
+                }
+            ]
+            for j in range(len(visions["image"])):
+                message[0]["content"].append(
+                    {
+                        "type": "image",
+                        "image": visions["image"][j][i],
+                    }
+                )
+            messages.append(message)
+        
+        image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+        inputs = self.processor(
+            text=tasks,
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
             return_tensors="pt",
+            **video_kwargs,
         )
-        lang_tokens = tokenized_prompt["input_ids"].to(device=device)
-        lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
-
-        return lang_tokens, lang_masks
+        input_ids = getattr(inputs, "input_ids", None)
+        attention_mask = getattr(inputs, "attention_mask", None)
+        pixel_values = getattr(inputs, "pixel_values", None)
+        image_grid_thw = getattr(inputs, "image_grid_thw", None)
+        pixel_values_videos = getattr(inputs, "pixel_values_videos", None)
+        video_grid_thw = getattr(inputs, "video_grid_thw", None)
+        second_per_grid_ts = getattr(inputs, "second_per_grid_ts", None)
+        
+        attention_mask = attention_mask.to(device=device, dtype=self.dtype)
+        pixel_values = pixel_values.to(device=device, dtype=self.dtype)
+        image_grid_thw = image_grid_thw.to(device=device, dtype=self.dtype)
+        pixel_values_videos = pixel_values_videos.to(device=device, dtype=self.dtype)
+        video_grid_thw = video_grid_thw.to(device=device, dtype=self.dtype)
+        
+        return input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts
+        
+        # return inputs
+        
 
     def _pi_aloha_decode_state(self, state):
         # Flip the joints.
@@ -455,7 +578,7 @@ class PI0Policy(PreTrainedPolicy):
         return actions
 
 
-class PI0FlowMatching(nn.Module):
+class   QwenFlowMatching(nn.Module):
     """
     π0: A Vision-Language-Action Flow Model for General Robot Control
 
@@ -504,6 +627,10 @@ class PI0FlowMatching(nn.Module):
         self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
 
         self.set_requires_grad()
+        
+    def init_load(self, path):
+        """Load the model weights from pretrained parameters."""
+        self.paligemma_with_expert.init_load(path)
 
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
@@ -525,55 +652,95 @@ class PI0FlowMatching(nn.Module):
         return time.to(dtype=self.dtype, device=device)
 
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks
+        self, input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts, position_ids=None, cache_position=None, rope_deltas=None, past_key_values=None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
         """
-        # TODO: avoid list in python and torch.cat ; prefer pre-allocation with torch.empty
-        embs = []
-        pad_masks = []
-        att_masks = []
+        input_ids = input_ids.to(device=self.paligemma_with_expert.qwen25vl.device)
+        inputs_embeds = self.paligemma_with_expert.qwen25vl.model.embed_tokens(input_ids)
+        
+        if pixel_values is not None:
+            pixel_values = pixel_values.type(self.dtype)
+            image_grid_thw = image_grid_thw.type(torch.int32)
+            image_embeds = self.paligemma_with_expert.qwen25vl.visual(pixel_values, grid_thw=image_grid_thw)
+            n_image_tokens = (input_ids == self.paligemma_with_expert.qwen25vl.config.image_token_id).sum().item()
+            n_image_features = image_embeds.shape[0]
+            
+            if n_image_tokens != n_image_features:
+                    raise ValueError(
+                        f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
+                    )
 
-        # TODO: remove for loop
-        for (
-            img,
-            img_mask,
-        ) in zip(images, img_masks, strict=False):
-            img_emb = self.paligemma_with_expert.embed_image(img)
-            img_emb = img_emb.to(dtype=torch.bfloat16)
+            mask = input_ids == self.paligemma_with_expert.qwen25vl.config.image_token_id
+            mask_unsqueezed = mask.unsqueeze(-1)
+            mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
+            image_mask = mask_expanded.to(inputs_embeds.device)
+            
+            image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+            inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+            
+        if pixel_values_videos is not None:
+            pixel_values_videos = pixel_values_videos.type(self.dtype)
+            video_grid_thw = video_grid_thw.type(torch.int32)
+            video_embeds = self.paligemma_with_expert.qwen25vl.visual(pixel_values_videos, grid_thw=video_grid_thw)
+            n_video_tokens = (input_ids == self.paligemma_with_expert.qwen25vl.config.video_token_id).sum().item()
+            n_video_features = video_embeds.shape[0]
+            
+            if n_video_tokens != n_video_features:
+                    raise ValueError(
+                        f"Video features and video tokens do not match: tokens: {n_video_tokens}, features {n_video_features}"
+                    )
 
-            # Normalize image embeddings
-            img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
-
-            bsize, num_img_embs = img_emb.shape[:2]
-            img_mask = img_mask[:, None].expand(bsize, num_img_embs)
-
-            embs.append(img_emb)
-            pad_masks.append(img_mask)
-
-            # Create attention masks so that image tokens attend to each other
-            att_masks += [0] * num_img_embs
-
-        lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
-
-        # Normalize language embeddings
-        lang_emb_dim = lang_emb.shape[-1]
-        lang_emb = lang_emb * math.sqrt(lang_emb_dim)
-
-        embs.append(lang_emb)
-        pad_masks.append(lang_masks)
-
-        # full attention between image and language inputs
-        num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
-
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-        return embs, pad_masks, att_masks
+            mask = input_ids == self.paligemma_with_expert.qwen25vl.config.video_token_id
+            mask_unsqueezed = mask.unsqueeze(-1)
+            mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
+            video_mask = mask_expanded.to(inputs_embeds.device)
+            
+            video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+            inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+        
+        if attention_mask is not None:
+            if attention_mask.ndim == 2:
+                for i in range(attention_mask.shape[0]):
+                    for j in range(attention_mask.shape[1]):
+                        if attention_mask[i][j] == 1:
+                            attention_mask[i][j] = 0
+            attention_mask = attention_mask.to(inputs_embeds.device)
+            
+        if position_ids is None and (attention_mask is None or attention_mask.ndim == 2):
+            # calculate RoPE index once per generation in the pre-fill stage only
+            if (
+                (cache_position is not None and cache_position[0] == 0)
+                or self.paligemma_with_expert.qwen25vl.rope_deltas is None
+                or (past_key_values is None or past_key_values.get_seq_length() == 0)
+            ):
+                position_ids, rope_deltas = self.paligemma_with_expert.qwen25vl.get_rope_index(
+                    input_ids,
+                    image_grid_thw,
+                    video_grid_thw,
+                    second_per_grid_ts,
+                    attention_mask
+                )
+                self.paligemma_with_expert.qwen25vl.rope_deltas = rope_deltas
+            # then use the prev pre-calculated rope-deltas to get the correct position ids
+            else:
+                batch_size, seq_length, _ = inputs_embeds.shape
+                delta = (
+                    (cache_position[0] + self.paligemma_with_expert.qwen25vl.rope_deltas).to(inputs_embeds.device)
+                    if cache_position is not None
+                    else 0
+                )
+                position_ids = torch.arange(seq_length, device=inputs_embeds.device)
+                position_ids = position_ids.view(1, -1).expand(batch_size, -1)
+                
+                if cache_position is not None:
+                    delta = delta.repeat_interleave(batch_size // delta.shape[0], dim=0)
+                position_ids = position_ids.add(delta)
+                position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
+        
+        return inputs_embeds, attention_mask, position_ids
+                
 
     def embed_suffix(self, state, noisy_actions, timestep):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
@@ -587,7 +754,7 @@ class PI0FlowMatching(nn.Module):
 
         # Embed state
         state_emb = self.state_proj(state)
-        state_emb = state_emb.to(dtype=torch.bfloat16)
+        state_emb = state_emb.to(dtype=self.dtype)
         embs.append(state_emb[:, None, :])
         bsize = state_emb.shape[0]
         dtype = state_emb.dtype
@@ -630,13 +797,10 @@ class PI0FlowMatching(nn.Module):
         att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        # print(f"pad mask shape is: {pad_masks.shape}")
-        # print(f"att mask shape is: {att_masks.shape}")
-
         return embs, pad_masks, att_masks
 
     def forward(
-        self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None
+        self, input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts, state, actions, noise=None, time=None
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         if noise is None:
@@ -649,24 +813,24 @@ class PI0FlowMatching(nn.Module):
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks
+        prefix_embs, prefix_att_masks, prefix_pos_ids = self.embed_prefix(
+            input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts
         )
         
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
 
-        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        # pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
 
-        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
-        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+        # att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        # position_ids = torch.cumsum(pad_masks, dim=1) - 1
 
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
-            attention_mask=att_2d_masks,
-            position_ids=position_ids,
+            attention_mask=att_masks,
+            position_ids=prefix_pos_ids,
             past_key_values=None,
             inputs_embeds=[prefix_embs, suffix_embs],
-            use_cache=False,
+            use_cache=True,
             fill_kv_cache=False,
         )
         suffix_out = suffix_out[:, -self.config.n_action_steps :]

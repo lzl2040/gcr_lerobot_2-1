@@ -439,6 +439,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         force_cache_sync: bool = False,
         download_videos: bool = True,
         video_backend: str | None = None,
+        dataset_name: str | None = None,
     ):
         """
         2 modes are available for instantiating this class, depending on 2 different use cases:
@@ -552,6 +553,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.revision = revision if revision else CODEBASE_VERSION
         self.video_backend = video_backend if video_backend else "pyav"
         self.delta_indices = None
+        self.dataset_name = dataset_name
 
         # Unused attributes
         self.image_writer = None
@@ -786,7 +788,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if key not in self.meta.video_keys
         }
 
-    def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
+    def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int, primary_obs_key: str) -> dict[str, torch.Tensor]:
         """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
         in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a
         Segmentation Fault. This probably happens because a memory reference to the video loader is created in
@@ -795,9 +797,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
         item = {}
         for vid_key, query_ts in query_timestamps.items():
             video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames_torchvision(
-                video_path, query_ts, self.tolerance_s, self.video_backend
-            )
+            if vid_key == primary_obs_key:
+                # print(vid_key)
+                frames = decode_video_frames_torchvision(
+                    video_path, query_ts, self.tolerance_s, self.video_backend, return_all=True
+                )
+            else:
+                frames = decode_video_frames_torchvision(
+                    video_path, query_ts, self.tolerance_s, self.video_backend
+                )
             item[vid_key] = frames.squeeze(0)
 
         return item
@@ -813,6 +821,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx) -> dict:
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
+        primary_obs_key = f"""observation.images.{OXE_DATASET_CONFIGS[self.dataset_name]["image_obs_keys"]["primary"]}"""
 
         query_indices = None
         if self.delta_indices is not None:
@@ -825,7 +834,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if len(self.meta.video_keys) > 0:
             current_ts = item["timestamp"].item()
             query_timestamps = self._get_query_timestamps(current_ts, query_indices)
-            video_frames = self._query_videos(query_timestamps, ep_idx)
+            if query_indices is not None:
+                video_frames = self._query_videos(query_timestamps, ep_idx, primary_obs_key=primary_obs_key)
+            else:
+                video_frames = self._query_videos(query_timestamps, ep_idx)
             item = {**video_frames, **item}
 
         if self.image_transforms is not None:
@@ -1355,7 +1367,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         # get dataset and dataset length
         
         parent_dir = "/data_16T/lerobot_openx/"
-        parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
+        # parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
         
         self.datasets = []
         self.dataset_sizes = []
@@ -1377,7 +1389,8 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                     root=data_root,
                     delta_timestamps=delta_timestamps,
                     image_transforms=image_transforms,
-                    video_backend=cfg.dataset.video_backend
+                    video_backend=cfg.dataset.video_backend,
+                    dataset_name=dataset_name,
                 )
                 self.datasets.append(dataset)
                 self.dataset_sizes.append(len(dataset))
@@ -1489,8 +1502,10 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         selected_dataset = random.choices(self.datasets, weights=self.sample_weights, k=1)[0]
         dataset_index = self.datasets.index(selected_dataset)
         dataset_name = self.dataset_names[dataset_index]
+        data_config = OXE_DATASET_CONFIGS[dataset_name]
         indices = self.selected_indices[dataset_index] # the selected indices of this dataset
         selected_id = random.choice(indices) # equal prob
+        # primary_obs_key = data_config["image_obs_keys"]["primary"]
         item = selected_dataset[selected_id]
         item['dataset_name'] = dataset_name
         # v1
@@ -1499,7 +1514,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         # #     print(f"{key}: {value}")
         # dataset_name = item["dataset_name"]
         # unify the observation
-        data_config = OXE_DATASET_CONFIGS[dataset_name]
+        
         image_obs_keys = data_config["image_obs_keys"]
         exist_image = None
         for new_key, old_key in image_obs_keys.items():
@@ -1591,10 +1606,21 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         image_transforms=image_transforms,
         seed=cfg.seed,
         data_mix="oxe_magic_soup_plus",
-        vla2root_json="vla2root_bak.json"
+        vla2root_json="vla2root_bak_single.json"
     )
     
     print(dataset)
+    for i in range(1):
+        item = dataset[i]
+        print(f"item {i}:")
+        for key, value in item.items():
+            print(f"{key}")
+            if key[:18] == "observation.images":
+                print(f"{key}: {value.shape}")
+                if value.ndim == 4:
+                    for img in value:
+                        print(img.shape)
+        print("\n")
     
 if __name__ == "__main__":
     dataset_func_test()

@@ -55,6 +55,10 @@ def get_policy_class(name: str) -> PreTrainedPolicy:
         from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy
 
         return PI0Policy
+    elif name == "qwen":
+        from lerobot.common.policies.pi0.modeling_qwen import QwenPolicy
+        
+        return QwenPolicy
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 
@@ -143,6 +147,7 @@ def make_policy(
     if cfg.pretrained_path:
         # Load a pretrained policy and override the config if needed (for example, if there are inference-time
         # hyperparameters that we want to vary).
+        cfg.train_from_scratch = False
         kwargs["pretrained_name_or_path"] = cfg.pretrained_path
         policy = policy_cls.from_pretrained(**kwargs)
         print(f"Load from:{cfg.pretrained_path}")
