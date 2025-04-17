@@ -253,16 +253,26 @@ class QwenPolicy(PreTrainedPolicy):
             config.output_features, config.normalization_mapping, dataset_stats
         )
         
-        processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
-        self.model = QwenFlowMatching(config)
-        self.processor = AutoProcessor.from_pretrained(processor_path)
+        # processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
+        # processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
+        
+        self.processor = AutoProcessor.from_pretrained(config.qwen_path)
+        self.processor.tokenizer.padding_side = "left"
         
         self.dtype = torch.bfloat16
 
         self.reset()
         if config.train_from_scratch:
             print(f"Training from scratch, loading qwen2.5 vl weights from {config.qwen_path}.")
-            self.init_load(config.qwen_path)
+            self.model = QwenFlowMatching(config, init_load=True, init_path = config.qwen_path)
+        else:
+            self.model = QwenFlowMatching(config, init_load=False)
+        self.model.paligemma_with_expert.set_requires_grad()
+        gc_kwargs = {"use_reentrant": False}
+        self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing = True
+        self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
+        self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing = True
+        self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
         
     def init_load(self, path):
         """Load the model weights from a checkpoint."""
@@ -369,9 +379,7 @@ class QwenPolicy(PreTrainedPolicy):
         convert pixel range from [0.0, 1.0] to [-1.0, 1.0] as requested by SigLIP.
         """
         
-        visions = {
-            "image": [],
-        }
+        visions = []
 
         present_img_keys = [key for key in self.config.image_features if key in batch]
         # missing_img_keys = [key for key in self.config.image_features if key not in batch]
@@ -380,139 +388,120 @@ class QwenPolicy(PreTrainedPolicy):
             raise ValueError(
                 f"All image features are missing from the batch. At least one expected. (batch: {batch.keys()}) (image_features:{self.config.image_features})"
             )
-
-        # Preprocess image features present in the batch
         for key in present_img_keys:
             img_seq = batch[key]
             bsize = img_seq.shape[0]
+        for i in range(bsize):
+            vision = {
+                "image": [],
+                "video": None,
+            }
+            visions.append(vision)
+        # Preprocess image features present in the batch
+        for key in present_img_keys:
+            img_seq = batch[key]
             device = img_seq.device
-            videos = []
-            imgs = []
-            # print(f"key: {key}, shape: {img_seq.shape}")
+            vision = {
+                "image": [],
+                "video": None,
+            }
             # If the image sequence is a list, it means we have a video
             if img_seq.ndim == 5:
-                video = []
                 for i in range(bsize):
-                    for j in range(img_seq.shape[1]):
+                    video = []
+                    for j in range(img_seq[i].shape[0]):
                         img = img_seq[i][j]
                         img = img.cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
-                        # print(img.shape)
-                        img_pil = Image.fromarray(img)
+                        img_pil = Image.fromarray(img).resize((112, 112))
                         video.append(img_pil)
-                    videos.append(video)
-                visions["video"] = videos
+                    video_length = batch['video_lengths'][i]
+                    visions[i]["video"] = video[:video_length]
+                    if video_length > self.config.max_frame:
+                        # Sample the video from the ending
+                        video = video[-self.config.max_frame:]
             else:
                 for i in range(bsize):
                     img = img_seq[i].cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
-                    # print(img.shape)
                     img = Image.fromarray(img)
-                    imgs.append(img)
-                visions["image"].append(imgs)
-                    
-            
-        #     img = batch[key]
-
-        #     if self.config.resize_imgs_with_padding is not None:
-        #         img = resize_with_pad(img, *self.config.resize_imgs_with_padding, pad_value=0)
-
-        #     # Normalize from range [0,1] to [-1,1] as expected by siglip
-        #     img = img * 2.0 - 1.0
-
-        #     bsize = img.shape[0]
-        #     device = img.device
-        #     mask = torch.ones(bsize, dtype=torch.bool, device=device)
-        #     images.append(img)
-        #     img_masks.append(mask)
-
-        # # Create image features not present in the batch
-        # # as fully 0 padded images.
-        # for num_empty_cameras in range(len(missing_img_keys)):
-        #     if num_empty_cameras >= self.config.empty_cameras:
-        #         break
-        #     img = torch.ones_like(img) * -1
-        #     mask = torch.zeros_like(mask)
-        #     images.append(img)
-        #     img_masks.append(mask)
+                    visions[i]["image"].append(img)
 
         return visions, bsize, device
 
-    def prepare_language(self, batch) -> tuple[Tensor, Tensor]:
+    def prepare_language(self, batch, visions) -> tuple[Tensor, Tensor]:
         """Tokenize the text input"""
         
-        def apply_template(text):
+        def apply_template(text, vision=None):
             message = [
                 {"role": "user",
                 "content": [
-                    {
-                        "type": "video",
-                        "video": None,
-                    },
-                    {
-                        "type": "image",
-                        "image": None,    
-                    },
-                    {
-                        "type": "image",
-                        "image": None,    
-                    },
-                    {"type": "text", "text": text},
+                    
                 ],}
             ]
+            if "video" in vision.keys():
+                if vision["video"] is not None:
+                    message[0]["content"].append(
+                        {
+                            "type": "video",
+                            "video": vision["video"],
+                        },
+                    )
+            for i in range(len(vision["image"])):
+                message[0]["content"].append(
+                    {
+                        "type": "image",
+                        "image": vision["image"][i],
+                    }
+                )
+            message[0]["content"].append({"type": "text", "text": text})
             return self.processor.apply_chat_template(
                 message, tokenize=False, add_generation_prompt=True
             )
         # device = batch[OBS_ROBOT].device
         tasks = batch["task"]
 
-        # PaliGemma prompt has to end with a new line
-        # tasks = [task if task.endswith("\n") else f"{task}\n" for task in tasks]
-        
         # Qwen2.5VL prompt uses a chat template
-        tasks = [apply_template(task) for task in tasks]
-
-        # tokenized_prompt = self.language_tokenizer.__call__(
-        #     tasks,
-        #     padding="max_length",
-        #     padding_side="right",
-        #     max_length=self.config.tokenizer_max_length,
-        #     return_tensors="pt",
-        # )
-        # lang_tokens = tokenized_prompt["input_ids"].to(device=device)
-        # lang_masks = tokenized_prompt["attention_mask"].to(device=device, dtype=torch.bool)
-
-        # return lang_tokens, lang_masks
+        templates = []
+        for index in range(len(tasks)):
+            templates.append(apply_template(tasks[index], visions[index]))
         
-        return tasks
+        return templates
     
     def prepare_input(self, batch):
         """Prepare the input for the model"""
-        tasks = self.prepare_language(batch)
+        
         visions, bsize, device = self.prepare_images(batch)
+        tasks = self.prepare_language(batch, visions)
         texts = batch["task"]
         messages = []
+        
         for i in range(bsize):
-            message = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "video",
-                            "video": visions["video"][i],
-                        },
-                        {"type": "text", "text": texts[i]},
-                    ],
-                }
-            ]
-            for j in range(len(visions["image"])):
+            video = visions[i]["video"]
+            message = [{
+                "role": "user",
+                "content": []
+            }]
+            if video is not None:
+                message[0]["content"].append(
+                    {
+                        "type": "video",
+                        "video": video,
+                    },
+                )
+            for j in range(len(visions[i]["image"])):
                 message[0]["content"].append(
                     {
                         "type": "image",
-                        "image": visions["image"][j][i],
+                        "image": visions[i]["image"][j],
                     }
                 )
+            message[0]["content"].append(
+                {"type": "text", "text": texts[i]}
+            )
             messages.append(message)
-        
         image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+        # if video_inputs is not None:
+        #     print(f"video_inputs: {len(video_inputs[0])}, {video_inputs[0][0].size}, {len(video_inputs[0][0].split())}")
+        # print(f"image_inputs: {len(image_inputs)}, {image_inputs[0].size}")
         inputs = self.processor(
             text=tasks,
             images=image_inputs,
@@ -529,11 +518,16 @@ class QwenPolicy(PreTrainedPolicy):
         video_grid_thw = getattr(inputs, "video_grid_thw", None)
         second_per_grid_ts = getattr(inputs, "second_per_grid_ts", None)
         
-        attention_mask = attention_mask.to(device=device, dtype=self.dtype)
-        pixel_values = pixel_values.to(device=device, dtype=self.dtype)
-        image_grid_thw = image_grid_thw.to(device=device, dtype=self.dtype)
-        pixel_values_videos = pixel_values_videos.to(device=device, dtype=self.dtype)
-        video_grid_thw = video_grid_thw.to(device=device, dtype=self.dtype)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device=device, dtype=self.dtype)
+        if pixel_values is not None:
+            pixel_values = pixel_values.to(device=device, dtype=self.dtype)
+        if image_grid_thw is not None:
+            image_grid_thw = image_grid_thw.to(device=device, dtype=self.dtype)
+        if pixel_values_videos is not None:
+            pixel_values_videos = pixel_values_videos.to(device=device, dtype=self.dtype)
+        if video_grid_thw is not None:
+            video_grid_thw = video_grid_thw.to(device=device, dtype=self.dtype)
         
         return input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts
         
@@ -605,7 +599,7 @@ class   QwenFlowMatching(nn.Module):
     └──────────────────────────────┘
     """
 
-    def __init__(self, config):
+    def __init__(self, config, init_load = False, init_path = None):
         super().__init__()
         self.config = config
         
@@ -616,7 +610,7 @@ class   QwenFlowMatching(nn.Module):
             train_expert_only=self.config.train_expert_only,
             attention_implementation=self.config.attention_implementation,
         )
-        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config)
+        self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config, init_load = init_load, init_path = init_path)
 
         # Projections are float32
         self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
@@ -683,6 +677,8 @@ class   QwenFlowMatching(nn.Module):
         if pixel_values_videos is not None:
             pixel_values_videos = pixel_values_videos.type(self.dtype)
             video_grid_thw = video_grid_thw.type(torch.int32)
+            # print(f"video_grid_thw: {video_grid_thw.shape}")
+            # print(f"pixel_values_videos: {pixel_values_videos.shape}")
             video_embeds = self.paligemma_with_expert.qwen25vl.visual(pixel_values_videos, grid_thw=video_grid_thw)
             n_video_tokens = (input_ids == self.paligemma_with_expert.qwen25vl.config.video_token_id).sum().item()
             n_video_features = video_embeds.shape[0]
@@ -701,11 +697,6 @@ class   QwenFlowMatching(nn.Module):
             inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
         
         if attention_mask is not None:
-            if attention_mask.ndim == 2:
-                for i in range(attention_mask.shape[0]):
-                    for j in range(attention_mask.shape[1]):
-                        if attention_mask[i][j] == 1:
-                            attention_mask[i][j] = 0
             attention_mask = attention_mask.to(inputs_embeds.device)
             
         if position_ids is None and (attention_mask is None or attention_mask.ndim == 2):
@@ -716,11 +707,11 @@ class   QwenFlowMatching(nn.Module):
                 or (past_key_values is None or past_key_values.get_seq_length() == 0)
             ):
                 position_ids, rope_deltas = self.paligemma_with_expert.qwen25vl.get_rope_index(
-                    input_ids,
-                    image_grid_thw,
-                    video_grid_thw,
-                    second_per_grid_ts,
-                    attention_mask
+                    input_ids = input_ids,
+                    image_grid_thw = image_grid_thw,
+                    video_grid_thw = video_grid_thw,
+                    second_per_grid_ts = second_per_grid_ts,
+                    attention_mask = attention_mask,
                 )
                 self.paligemma_with_expert.qwen25vl.rope_deltas = rope_deltas
             # then use the prev pre-calculated rope-deltas to get the correct position ids
@@ -738,6 +729,13 @@ class   QwenFlowMatching(nn.Module):
                     delta = delta.repeat_interleave(batch_size // delta.shape[0], dim=0)
                 position_ids = position_ids.add(delta)
                 position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
+        
+        # if attention_mask is not None:
+        #     if attention_mask.ndim == 2:
+        #         for i in range(attention_mask.shape[0]):
+        #             for j in range(attention_mask.shape[1]):
+        #                 if attention_mask[i][j] == 1:
+        #                     attention_mask[i][j] = 0
         
         return inputs_embeds, attention_mask, position_ids
                 
@@ -790,7 +788,7 @@ class   QwenFlowMatching(nn.Module):
         pad_masks.append(action_time_mask)
 
         # Set attention masks so that image, language and state inputs do not attend to action tokens
-        att_masks += [1] + ([0] * (self.config.n_action_steps - 1))
+        att_masks += [1] + ([1] * (self.config.n_action_steps - 1))
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
@@ -821,9 +819,13 @@ class   QwenFlowMatching(nn.Module):
 
         # pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        # print(f"init att masks: {att_masks.shape}")
 
         # att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         # position_ids = torch.cumsum(pad_masks, dim=1) - 1
+        
+        # print(f"Prefix Emb shape: {prefix_embs.shape}")
+        # print(f"Suffix Emb shape: {suffix_embs.shape}")
 
         (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_masks,

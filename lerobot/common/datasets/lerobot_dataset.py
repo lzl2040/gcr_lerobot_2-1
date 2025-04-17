@@ -32,6 +32,7 @@ import torch
 import torch.utils
 
 from torch.utils.data import ConcatDataset, Subset
+from torch.utils.data.dataloader import default_collate
 
 from datasets import concatenate_datasets, load_dataset, Dataset
 
@@ -42,6 +43,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.oxe_configs import OXE_DATASET_CONFIGS
 from lerobot.common.datasets.mixtures import OXE_NAMED_MIXTURES
+from lerobot.common.datasets.utils import cycle
 # from lerobot.common.datasets.factory import resolve_delta_timestamps
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats, aggregate_multi_stats
 from lerobot.common.datasets.transforms import ImageTransforms
@@ -1609,18 +1611,50 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         vla2root_json="vla2root_bak_single.json"
     )
     
-    print(dataset)
-    for i in range(1):
-        item = dataset[i]
-        print(f"item {i}:")
-        for key, value in item.items():
-            print(f"{key}")
-            if key[:18] == "observation.images":
-                print(f"{key}: {value.shape}")
-                if value.ndim == 4:
-                    for img in value:
-                        print(img.shape)
-        print("\n")
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=1
+    )
+    dl_iter = cycle(dataloader)
+    batch = next(dl_iter)
+    keys = list(batch.keys())
+    print(f"batch:{keys}")
+    for key in keys:
+        print(f"Value type for key {key}: {type(batch[key])}")
+        if isinstance(batch[key], list):
+            print(f"List elements: {type(batch[key][0])}")
+    # print(f"Video shape: {batch['observation.images.secondary'].shape}")
+
+    # print(dataset)
+    # for i in range(1):
+    #     item = dataset[i]
+    #     print(f"item {i}:")
+    #     for key, value in item.items():
+    #         print(f"{key}")
+    #         if key[:18] == "observation.images":
+    #             print(f"{key}: {value.shape}")
+    #             if value.ndim == 4:
+    #                 for img in value:
+    #                     print(img.shape)
+    #     print("\n")
+        
+def extra_collate_fn(batch):
+    collated = {}
+    for key in batch[0].keys():
+        items = [sample[key] for sample in batch]
+        if key == "observation.images.primary":
+            for i in range(len(items)):
+                if items[i].ndim == 3:
+                    items[i] = items[i].unsqueeze(0)
+            collated[key] = torch.nn.utils.rnn.pad_sequence(items, batch_first=True)
+            collated['video_lengths'] = torch.tensor(
+                [v.shape[0] for v in items], dtype=torch.long
+            )
+        else:
+            collated[key] = default_collate(items)
+    
+    return collated
+        
     
 if __name__ == "__main__":
     dataset_func_test()

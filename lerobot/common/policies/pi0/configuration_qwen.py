@@ -12,11 +12,15 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 @dataclass
 class QwenConfig(PreTrainedConfig):
     
-    qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
+    # qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
+    qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
+    qwen_path = "/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/"
     # Input / output structure.
     n_obs_steps: int = 1
     chunk_size: int = 50
     n_action_steps: int = 50
+    
+    max_frame: int = 75
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
@@ -46,7 +50,7 @@ class QwenConfig(PreTrainedConfig):
     use_delta_joint_actions_aloha: bool = False
 
     # Tokenizer
-    tokenizer_max_length: int = 100
+    # tokenizer_max_length: int = 100
 
     # Projector
     proj_width: int = 1536
@@ -59,8 +63,8 @@ class QwenConfig(PreTrainedConfig):
     attention_implementation: str = "fa2"  # or eager, flex
 
     # Finetuning settings
-    freeze_vision_encoder: bool = False
-    train_expert_only: bool = False
+    freeze_vision_encoder: bool = True
+    train_expert_only: bool = True
     train_state_proj: bool = True
     train_from_scratch: bool = True
 

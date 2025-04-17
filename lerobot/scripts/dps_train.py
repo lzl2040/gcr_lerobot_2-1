@@ -34,7 +34,7 @@ from torch.utils.data import DataLoader
 
 from lerobot.common.datasets.factory import make_dataset
 from lerobot.common.datasets.transforms import ImageTransforms
-from lerobot.common.datasets.lerobot_dataset import MultiDatasetforDistTraining
+from lerobot.common.datasets.lerobot_dataset import MultiDatasetforDistTraining, extra_collate_fn
 from lerobot.common.datasets.sampler import EpisodeAwareSampler, DistEpisodeAwareSampler
 from lerobot.common.datasets.utils import cycle
 from lerobot.common.envs.factory import make_env
@@ -125,14 +125,14 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed + int(os.environ.get('RANK', 0)))
 
     # Dataset setup
-    # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
-    #                        seed=cfg.seed, 
-    #                        data_mix="oxe_magic_soup_plus",
-    #                         # data_mix="env_in_simpler",
-    #                        vla2root_json="vla2root.json")
     dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
-                           seed=cfg.seed, data_mix="oxe_magic_soup_plus",
-                           vla2root_json="vla2root_bak_single.json")
+                           seed=cfg.seed + int(os.environ.get("RANK", 0)), 
+                           data_mix="oxe_magic_soup_plus",
+                            # data_mix="env_in_simpler",
+                           vla2root_json="vla2root.json")
+    # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
+    #                        seed=cfg.seed + int(os.environ.get("RANK", 0)), data_mix="oxe_magic_soup_plus",
+    #                        vla2root_json="vla2root_bak_single.json")
     logger.info(f"Dataset: {dataset}")
 
     # Policy setup
@@ -157,7 +157,7 @@ def train(cfg: TrainPipelineConfig):
 
     # Optimizer and scheduler
     logger.info("Creating optimizer and scheduler")
-    optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+    # optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     # Logging setup (main process only)
     if int(os.environ.get('RANK', 0)) == 0:
@@ -197,18 +197,27 @@ def train(cfg: TrainPipelineConfig):
     dataloader = DataLoader(dataset=dataset,
                             batch_size=batch_size,
                             sampler=sampler,
-                            num_workers=8,
+                            num_workers=4,
                             pin_memory=True,
+                            collate_fn=extra_collate_fn,
                             persistent_workers=True,
                             prefetch_factor=4
                             )
     # DeepSpeed initialization
-    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+    # model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+    #     model=policy,
+    #     optimizer=optimizer,
+    #     lr_scheduler=lr_scheduler,
+    #     config=cfg.deepspeed,
+    #     model_parameters=policy.parameters(),
+    # )
+    params = list(policy.model.paligemma_with_expert.qwen_expert.parameters()) + list(policy.model.paligemma_with_expert.qwen25vl.model.parameters())
+    # params = list(policy.model.paligemma_with_expert.qwen_expert.parameters())
+    params = list(filter(lambda p: p.requires_grad, params))
+    model_engine, optimizer, _, __ = deepspeed.initialize(
         model=policy,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
         config=cfg.deepspeed,
-        model_parameters=policy.parameters(),
+        model_parameters=params,
     )
     logger.info(f"Training batch size:{model_engine.train_batch_size()}") # micro_size * gradient_cum_size * gpu_num
     
@@ -267,9 +276,9 @@ def train(cfg: TrainPipelineConfig):
         dataloading_time = time.perf_counter() - start_time
         dataloading_s += dataloading_time
         
-        print(batch['observation.images.primary'].shape)
-        print(batch['observation.images.secondary'].shape)
-        print(batch['observation.images.wrist'].shape)
+        # print(batch['observation.images.primary'].shape)
+        # print(batch['observation.images.secondary'].shape)
+        # print(batch['observation.images.wrist'].shape)
         
         fwd_bwd_start = time.perf_counter()
         loss, output_dict = update_policy(
