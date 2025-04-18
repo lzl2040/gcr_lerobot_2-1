@@ -823,8 +823,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx) -> dict:
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
-        primary_obs_key = f"""observation.images.{OXE_DATASET_CONFIGS[self.dataset_name]["image_obs_keys"]["primary"]}"""
-
+        if OXE_DATASET_CONFIGS[self.dataset_name]["image_obs_keys"]["primary"] is not None:
+            primary_obs_key = f"""observation.images.{OXE_DATASET_CONFIGS[self.dataset_name]["image_obs_keys"]["primary"]}"""
+        else:
+            primary_obs_key = "Zeus" #We can use any random key here,  as there will be no matching video
+            
         query_indices = None
         if self.delta_indices is not None:
             query_indices, padding = self._get_query_indices(idx, ep_idx)
@@ -1352,6 +1355,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         """
         super().__init__()
         self.episodes = None
+        self.cfg = cfg
         # set seed
         set_seed(seed)
         # get sample weights
@@ -1519,6 +1523,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         
         image_obs_keys = data_config["image_obs_keys"]
         exist_image = None
+        key_to_pad = []
         for new_key, old_key in image_obs_keys.items():
             if old_key != None:
                 item[f"observation.images.{new_key}"] = item[f"observation.images.{old_key}"]
@@ -1527,7 +1532,16 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 del item[f"observation.images.{old_key}"]
             else:
                 # if missing, use zero
-                item[f"observation.images.{new_key}"] = torch.zeros_like(exist_image)
+                key_to_pad.append(new_key)
+        if exist_image is not None:
+            if exist_image.ndim == 4:
+                sample_image = exist_image[0]
+            elif exist_image.ndim == 3:
+                sample_image = exist_image
+        else:
+            sample_image = torch.zeros((self.cfg.dataset.default_channel_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size), dtype=torch.float32)
+        for new_key in key_to_pad:
+            item[f"observation.images.{new_key}"] = torch.zeros_like(sample_image)
         # remove other image keys
         keys = list(item.keys())
         # print(keys, self.new_obs_image_keys)

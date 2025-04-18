@@ -36,6 +36,8 @@ class DatasetConfig:
     revision: str | None = None
     use_imagenet_stats: bool = True
     video_backend: str = "pyav"
+    default_image_size: int = 224
+    default_channel_size: int = 3
 
 
 @dataclass
