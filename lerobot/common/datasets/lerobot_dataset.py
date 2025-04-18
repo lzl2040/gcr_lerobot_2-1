@@ -1369,7 +1369,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         # get dataset and dataset length
         
         parent_dir = "/data_16T/lerobot_openx/"
-        # parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
+        parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
         
         self.datasets = []
         self.dataset_sizes = []
