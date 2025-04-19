@@ -421,13 +421,13 @@ class QwenPolicy(PreTrainedPolicy):
                         video.append(img_pil)
                     video_length = batch['video_lengths'][i]
                     # if int(os.environ.get("RANK", 0)) == 0:
-                    print(f"video_length: {video_length}, config max frame: {self.config.max_frame}")
+                    print(f"video_length: {video_length}, config max frame: {self.config.max_frame}, frames sent in : {img_seq[i].shape[0]}")
                     
+                    visions[i]["video"] = video[:video_length]
                     if video_length > self.config.max_frame:
                         # Sample the video from the ending
-                        visions[i]["video"] = video[-self.config.max_frame:video_length]
-                    else:
-                        visions[i]["video"] = video[:video_length]
+                        visions[i]["video"] = video[-self.config.max_frame:]
+                        
                     # if int(os.environ.get("RANK", 0)) == 0:
                     current_video_length = len(visions[i]["video"])
                     current_frame_size = visions[i]["video"][0].size
