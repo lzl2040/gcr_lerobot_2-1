@@ -10,11 +10,11 @@
     "gradient_clipping": 1.0,
     "zero_optimization": {
         "stage": 2,
-        "overlap_comm": false,
+        "overlap_comm": true,
         "contiguous_gradients": true,
         "reduce_scatter": true,
-        "reduce_bucket_size": 2e8,
-        "allgather_bucket_size": 2e8,
+        "reduce_bucket_size": 4e8,
+        "allgather_bucket_size": 1e9,
         "round_robin_gradients": false
     }
 }
