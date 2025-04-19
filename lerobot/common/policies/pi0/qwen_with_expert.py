@@ -765,9 +765,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         Returns:
             `torch.Tensor`: hidden_states.
         """
-        print(f"Into custom visual processing, input states: \nhidden_states: {hidden_states.shape}, grid_thw: {grid_thw.shape}")
+        # print(f"Into custom visual processing, input states: \nhidden_states: {hidden_states.shape}, grid_thw: {grid_thw.shape}")
         hidden_states = self.qwen25vl.visual.patch_embed(hidden_states)
-        print(f"After patch embedding, hidden_states: {hidden_states.shape}")
+        # print(f"After patch embedding, hidden_states: {hidden_states.shape}")
         rot_pos_emb = self.qwen25vl.visual.rot_pos_emb(grid_thw)
         window_index, cu_window_seqlens = self.qwen25vl.visual.get_window_index(grid_thw)
         
@@ -777,9 +777,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
         )
         seq_len, _ = hidden_states.size()
-        print(f"Sequence length: {seq_len}, cu_window_seqlens: {cu_window_seqlens.shape}")
+        # print(f"Sequence length: {seq_len}, cu_window_seqlens: {cu_window_seqlens.shape}")
         hidden_states = hidden_states.reshape(seq_len // self.qwen25vl.visual.spatial_merge_unit, self.qwen25vl.visual.spatial_merge_unit, -1)
-        print(f"After first reshaping, hidden_states: {hidden_states.shape}")
+        # print(f"After first reshaping, hidden_states: {hidden_states.shape}")
         
         hidden_states = hidden_states[window_index, :, :]
         hidden_states = hidden_states.reshape(seq_len, -1)

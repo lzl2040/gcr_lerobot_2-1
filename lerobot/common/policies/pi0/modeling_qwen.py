@@ -366,7 +366,6 @@ class QwenPolicy(PreTrainedPolicy):
         loss = losses.mean()
         # For logging
         loss_dict["l2_loss"] = loss.item()
-        print("\n")
 
         return loss, loss_dict
     
@@ -390,10 +389,10 @@ class QwenPolicy(PreTrainedPolicy):
             raise ValueError(
                 f"All image features are missing from the batch. At least one expected. (batch: {batch.keys()}) (image_features:{self.config.image_features})"
             )
-        print(f"Present image keys: {present_img_keys}")
+        # print(f"Present image keys: {present_img_keys}")
         for key in present_img_keys:
             img_seq = batch[key]
-            print(f"key: {key}, img_seq: {img_seq.shape}")
+            # print(f"key: {key}, img_seq: {img_seq.shape}")
             bsize = img_seq.shape[0]
         for i in range(bsize):
             vision = {
@@ -421,7 +420,7 @@ class QwenPolicy(PreTrainedPolicy):
                         video.append(img_pil)
                     video_length = batch['video_lengths'][i]
                     # if int(os.environ.get("RANK", 0)) == 0:
-                    print(f"video_length: {video_length}, config max frame: {self.config.max_frame}, frames sent in : {img_seq[i].shape[0]}")
+                    # print(f"video_length: {video_length}, config max frame: {self.config.max_frame}, frames sent in : {img_seq[i].shape[0]}")
                     
                     visions[i]["video"] = video[:video_length]
                     if video_length > self.config.max_frame:
@@ -431,7 +430,7 @@ class QwenPolicy(PreTrainedPolicy):
                     # if int(os.environ.get("RANK", 0)) == 0:
                     current_video_length = len(visions[i]["video"])
                     current_frame_size = visions[i]["video"][0].size
-                    print(f"Video after preprocessing: {current_video_length}, {current_frame_size}")
+                    # print(f"Video after preprocessing: {current_video_length}, {current_frame_size}")
             else:
                 for i in range(bsize):
                     img = img_seq[i].cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
@@ -513,10 +512,10 @@ class QwenPolicy(PreTrainedPolicy):
             messages.append(message)
         image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
         # if int(os.environ.get("RANK", 0)) == 0:
-        if video_inputs is not None:
-            video_lengths = [len(video) for video in video_inputs]
-            print(f"Num of video: {len(video_inputs)}, Length per video: {video_lengths}, Video frame size: {video_inputs[0][0].size}, {len(video_inputs[0][0].split())}")
-        print(f"image_inputs: {len(image_inputs)}, {image_inputs[0].size}")
+        # if video_inputs is not None:
+        #     video_lengths = [len(video) for video in video_inputs]
+        #     print(f"Num of video: {len(video_inputs)}, Length per video: {video_lengths}, Video frame size: {video_inputs[0][0].size}, {len(video_inputs[0][0].split())}")
+        # print(f"image_inputs: {len(image_inputs)}, {image_inputs[0].size}")
         inputs = self.processor(
             text=tasks,
             images=image_inputs,
@@ -693,8 +692,8 @@ class   QwenFlowMatching(nn.Module):
             pixel_values_videos = pixel_values_videos.type(self.dtype)
             video_grid_thw = video_grid_thw.type(torch.int32)
             # if int(os.environ.get("RANK", 0)) == 0:
-            print(f"video_grid_thw: {video_grid_thw.shape}")
-            print(f"pixel_values_videos: {pixel_values_videos.shape}")
+            # print(f"video_grid_thw: {video_grid_thw.shape}")
+            # print(f"pixel_values_videos: {pixel_values_videos.shape}")
             video_embeds = self.paligemma_with_expert.custom_visual_forward(pixel_values_videos, grid_thw=video_grid_thw)
             n_video_tokens = (input_ids == self.paligemma_with_expert.qwen25vl.config.video_token_id).sum().item()
             n_video_features = video_embeds.shape[0]
