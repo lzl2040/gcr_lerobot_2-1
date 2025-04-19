@@ -1511,28 +1511,24 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         data_config = OXE_DATASET_CONFIGS[dataset_name]
         indices = self.selected_indices[dataset_index] # the selected indices of this dataset
         selected_id = random.choice(indices) # equal prob
-        # primary_obs_key = data_config["image_obs_keys"]["primary"]
+        
         item = selected_dataset[selected_id]
         item['dataset_name'] = dataset_name
-        # v1
-        # item = self.dataset[index]
-        # # for key, value in item.items():
-        # #     print(f"{key}: {value}")
-        # dataset_name = item["dataset_name"]
-        # unify the observation
         
         image_obs_keys = data_config["image_obs_keys"]
         exist_image = None
         key_to_pad = []
         for new_key, old_key in image_obs_keys.items():
             if old_key != None:
+                
                 item[f"observation.images.{new_key}"] = item[f"observation.images.{old_key}"]
                 exist_image = item[f"observation.images.{old_key}"]
-                # print(type(exist_image), exist_image.shape)
+                
                 del item[f"observation.images.{old_key}"]
             else:
-                # if missing, use zero
+                # if missing, use zero image
                 key_to_pad.append(new_key)
+                
         if exist_image is not None:
             if exist_image.ndim == 4:
                 sample_image = exist_image[0]
@@ -1540,25 +1536,32 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 sample_image = exist_image
         else:
             sample_image = torch.zeros((self.cfg.dataset.default_channel_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size), dtype=torch.float32)
+        
         for new_key in key_to_pad:
             item[f"observation.images.{new_key}"] = torch.zeros_like(sample_image)
+            if new_key == "primary":
+                item[f"observation.images.{new_key}"] = item[f"observation.images.{new_key}"].unsqueeze(0)   
+       
         # remove other image keys
         keys = list(item.keys())
-        # print(keys, self.new_obs_image_keys)
         for key in keys:
             if "images" in key and key not in self.new_obs_image_keys:
                 del item[key]
+                
+        # add the dataset source
         if "episode_index" in item:
             item["source"] = f"{item['dataset_name']}_episode_id_{item['episode_index']}"
         elif "ep_idx" in item:
             item["source"] = f"{item['dataset_name']}_episode_id_{item['ep_idx']}"
         else:
             item["source"] = f"{item['dataset_name']}_with_unknown_episode_id"
-        # print(item.keys())
+        
+        # Pad the action and observation vectors
         item["action"] = self.pad_vector(item["action"], self.max_action_dim)
-        # print(item["action"].shape)
         item["observation.state"] = self.pad_vector(item["observation.state"], self.max_state_dim)
+        
         return item
+    
     @property
     def num_frames(self) -> int:
         """Number of frames in selected episodes."""
