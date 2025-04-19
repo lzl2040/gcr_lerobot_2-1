@@ -157,7 +157,7 @@ def train(cfg: TrainPipelineConfig):
 
     # Optimizer and scheduler
     logger.info("Creating optimizer and scheduler")
-    # optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+    optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
     # Logging setup (main process only)
     if int(os.environ.get('RANK', 0)) == 0:
@@ -214,10 +214,11 @@ def train(cfg: TrainPipelineConfig):
     params = list(policy.model.paligemma_with_expert.qwen_expert.parameters()) + list(policy.model.paligemma_with_expert.qwen25vl.model.parameters())
     # params = list(policy.model.paligemma_with_expert.qwen_expert.parameters())
     params = list(filter(lambda p: p.requires_grad, params))
-    model_engine, optimizer, _, __ = deepspeed.initialize(
+    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
         model=policy,
         config=cfg.deepspeed,
-        model_parameters=params,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler
     )
     logger.info(f"Training batch size:{model_engine.train_batch_size()}") # micro_size * gradient_cum_size * gpu_num
     
