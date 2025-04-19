@@ -336,8 +336,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         self.gradient_checkpointing = True
         # print(config.qwen25vl_config)
         # print(config.qwenexp_config)
-        # config.qwenexp_config._attn_implementation_internal = "flash_attention_2"
-        # config.qwen25vl_config._attn_implementation_internal = "flash_attention_2"
+        config.qwenexp_config._attn_implementation_internal = "flash_attention_2"
+        config.qwen25vl_config._attn_implementation_internal = "flash_attention_2"
         if not init_load:
             self.qwen25vl = Qwen2_5_VLForConditionalGeneration(config=config.qwen25vl_config)
         else:

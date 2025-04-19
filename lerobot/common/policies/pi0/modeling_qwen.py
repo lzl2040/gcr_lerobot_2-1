@@ -258,7 +258,7 @@ class QwenPolicy(PreTrainedPolicy):
         # processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
         
         self.processor = AutoProcessor.from_pretrained(config.qwen_path)
-        # self.processor.tokenizer.padding_side = "left"
+        self.processor.tokenizer.padding_side = "left"
         
         self.dtype = torch.bfloat16
 
