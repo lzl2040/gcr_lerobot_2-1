@@ -52,6 +52,7 @@ policy = Pi0Policy.from_pretrained("lerobot/pi0")
 import math
 import numpy as np
 from collections import deque
+import os
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -257,7 +258,7 @@ class QwenPolicy(PreTrainedPolicy):
         # processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
         
         self.processor = AutoProcessor.from_pretrained(config.qwen_path)
-        self.processor.tokenizer.padding_side = "left"
+        # self.processor.tokenizer.padding_side = "left"
         
         self.dtype = torch.bfloat16
 
@@ -365,6 +366,7 @@ class QwenPolicy(PreTrainedPolicy):
         loss = losses.mean()
         # For logging
         loss_dict["l2_loss"] = loss.item()
+        print("\n")
 
         return loss, loss_dict
     
@@ -406,6 +408,7 @@ class QwenPolicy(PreTrainedPolicy):
                 "video": None,
             }
             # If the image sequence is a list, it means we have a video
+            # 
             if img_seq.ndim == 5:
                 for i in range(bsize):
                     video = []
@@ -415,10 +418,18 @@ class QwenPolicy(PreTrainedPolicy):
                         img_pil = Image.fromarray(img).resize((112, 112))
                         video.append(img_pil)
                     video_length = batch['video_lengths'][i]
-                    visions[i]["video"] = video[:video_length]
+                    # if int(os.environ.get("RANK", 0)) == 0:
+                    print(f"video_length: {video_length}, config max frame: {self.config.max_frame}")
+                    
                     if video_length > self.config.max_frame:
                         # Sample the video from the ending
-                        video = video[-self.config.max_frame:]
+                        visions[i]["video"] = video[-self.config.max_frame:video_length]
+                    else:
+                        visions[i]["video"] = video[:video_length]
+                    # if int(os.environ.get("RANK", 0)) == 0:
+                    current_video_length = len(visions[i]["video"])
+                    current_frame_size = visions[i]["video"][0].size
+                    print(f"Video after preprocessing: {current_video_length}, {current_frame_size}")
             else:
                 for i in range(bsize):
                     img = img_seq[i].cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
@@ -499,9 +510,11 @@ class QwenPolicy(PreTrainedPolicy):
             )
             messages.append(message)
         image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
-        # if video_inputs is not None:
-        #     print(f"video_inputs: {len(video_inputs[0])}, {video_inputs[0][0].size}, {len(video_inputs[0][0].split())}")
-        # print(f"image_inputs: {len(image_inputs)}, {image_inputs[0].size}")
+        # if int(os.environ.get("RANK", 0)) == 0:
+        if video_inputs is not None:
+            video_lengths = [len(video) for video in video_inputs]
+            print(f"Num of video: {len(video_inputs)}, Length per video: {video_lengths}, Video frame size: {video_inputs[0][0].size}, {len(video_inputs[0][0].split())}")
+        print(f"image_inputs: {len(image_inputs)}, {image_inputs[0].size}")
         inputs = self.processor(
             text=tasks,
             images=image_inputs,
@@ -657,7 +670,7 @@ class   QwenFlowMatching(nn.Module):
         if pixel_values is not None:
             pixel_values = pixel_values.type(self.dtype)
             image_grid_thw = image_grid_thw.type(torch.int32)
-            image_embeds = self.paligemma_with_expert.qwen25vl.visual(pixel_values, grid_thw=image_grid_thw)
+            image_embeds = self.paligemma_with_expert.custom_visual_forward(pixel_values, grid_thw=image_grid_thw)
             n_image_tokens = (input_ids == self.paligemma_with_expert.qwen25vl.config.image_token_id).sum().item()
             n_image_features = image_embeds.shape[0]
             
@@ -677,9 +690,10 @@ class   QwenFlowMatching(nn.Module):
         if pixel_values_videos is not None:
             pixel_values_videos = pixel_values_videos.type(self.dtype)
             video_grid_thw = video_grid_thw.type(torch.int32)
-            # print(f"video_grid_thw: {video_grid_thw.shape}")
-            # print(f"pixel_values_videos: {pixel_values_videos.shape}")
-            video_embeds = self.paligemma_with_expert.qwen25vl.visual(pixel_values_videos, grid_thw=video_grid_thw)
+            # if int(os.environ.get("RANK", 0)) == 0:
+            print(f"video_grid_thw: {video_grid_thw.shape}")
+            print(f"pixel_values_videos: {pixel_values_videos.shape}")
+            video_embeds = self.paligemma_with_expert.custom_visual_forward(pixel_values_videos, grid_thw=video_grid_thw)
             n_video_tokens = (input_ids == self.paligemma_with_expert.qwen25vl.config.video_token_id).sum().item()
             n_video_features = video_embeds.shape[0]
             

@@ -336,8 +336,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         self.gradient_checkpointing = True
         # print(config.qwen25vl_config)
         # print(config.qwenexp_config)
-        config.qwenexp_config._attn_implementation_internal = "flash_attention_2"
-        config.qwen25vl_config._attn_implementation_internal = "flash_attention_2"
+        # config.qwenexp_config._attn_implementation_internal = "flash_attention_2"
+        # config.qwen25vl_config._attn_implementation_internal = "flash_attention_2"
         if not init_load:
             self.qwen25vl = Qwen2_5_VLForConditionalGeneration(config=config.qwen25vl_config)
         else:
@@ -753,3 +753,65 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         attn_output = attn_layer.o_proj(attn_output)
         
         return attn_output, attn_weights
+    
+    def custom_visual_forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor):
+        """
+        Args:
+            hidden_states (`torch.Tensor` of shape `(seq_len, hidden_size)`):
+                The final hidden states of the model.
+            grid_thw (`torch.Tensor` of shape `(num_images_or_videos, 3)`):
+                The temporal, height and width of feature shape of each image in LLM.
+
+        Returns:
+            `torch.Tensor`: hidden_states.
+        """
+        print(f"Into custom visual processing, input states: \nhidden_states: {hidden_states.shape}, grid_thw: {grid_thw.shape}")
+        hidden_states = self.qwen25vl.visual.patch_embed(hidden_states)
+        print(f"After patch embedding, hidden_states: {hidden_states.shape}")
+        rot_pos_emb = self.qwen25vl.visual.rot_pos_emb(grid_thw)
+        window_index, cu_window_seqlens = self.qwen25vl.visual.get_window_index(grid_thw)
+        
+        cu_window_seqlens = torch.tensor(
+            cu_window_seqlens,
+            device=hidden_states.device,
+            dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
+        )
+        seq_len, _ = hidden_states.size()
+        print(f"Sequence length: {seq_len}, cu_window_seqlens: {cu_window_seqlens}")
+        hidden_states = hidden_states.reshape(seq_len // self.qwen25vl.visual.spatial_merge_unit, self.qwen25vl.visual.spatial_merge_unit, -1)
+        print(f"After first reshaping, hidden_states: {hidden_states.shape}")
+        
+        hidden_states = hidden_states[window_index, :, :]
+        hidden_states = hidden_states.reshape(seq_len, -1)
+        
+        rot_pos_emb = rot_pos_emb.reshape(seq_len // self.qwen25vl.visual.spatial_merge_unit, self.qwen25vl.visual.spatial_merge_unit, -1)
+        rot_pos_emb = rot_pos_emb[window_index, :, :]
+        rot_pos_emb = rot_pos_emb.reshape(seq_len, -1)
+        
+        emb = torch.cat((rot_pos_emb, rot_pos_emb), dim=-1)
+        position_embeddings = (emb.cos(), emb.sin())
+        
+        cu_seqlens = torch.repeat_interleave(grid_thw[:, 1] * grid_thw[:, 2], grid_thw[:, 0]).cumsum(
+            dim=0,
+            # Select dtype based on the following factors:
+            #  - FA2 requires that cu_seqlens_q must have dtype int32
+            #  - torch.onnx.export requires that cu_seqlens_q must have same dtype as grid_thw
+            # See https://github.com/huggingface/transformers/pull/34852 for more information
+            dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
+        )
+        cu_seqlens = torch.nn.functional.pad(cu_seqlens, (1, 0), value=0)
+        
+        for layer_num, blk in enumerate(self.qwen25vl.visual.blocks):
+            if layer_num in self.qwen25vl.visual.fullatt_block_indexes:
+                cu_seqlens_now = cu_seqlens
+            else:
+                cu_seqlens_now = cu_window_seqlens
+            
+            hidden_states = blk(hidden_states, cu_seqlens=cu_seqlens_now, position_embeddings=position_embeddings)
+            
+        hidden_states = self.qwen25vl.visual.merger(hidden_states)
+        reverse_indices = torch.argsort(window_index)
+        hidden_states = hidden_states[reverse_indices, :]
+        
+        return hidden_states
+        
