@@ -390,8 +390,10 @@ class QwenPolicy(PreTrainedPolicy):
             raise ValueError(
                 f"All image features are missing from the batch. At least one expected. (batch: {batch.keys()}) (image_features:{self.config.image_features})"
             )
+        print(f"Present image keys: {present_img_keys}")
         for key in present_img_keys:
             img_seq = batch[key]
+            print(f"key: {key}, img_seq: {img_seq.shape}")
             bsize = img_seq.shape[0]
         for i in range(bsize):
             vision = {

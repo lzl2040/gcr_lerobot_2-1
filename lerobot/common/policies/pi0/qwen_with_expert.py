@@ -777,7 +777,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             dtype=grid_thw.dtype if torch.jit.is_tracing() else torch.int32,
         )
         seq_len, _ = hidden_states.size()
-        print(f"Sequence length: {seq_len}, cu_window_seqlens: {cu_window_seqlens}")
+        print(f"Sequence length: {seq_len}, cu_window_seqlens: {cu_window_seqlens.shape}")
         hidden_states = hidden_states.reshape(seq_len // self.qwen25vl.visual.spatial_merge_unit, self.qwen25vl.visual.spatial_merge_unit, -1)
         print(f"After first reshaping, hidden_states: {hidden_states.shape}")
         
