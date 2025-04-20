@@ -1834,6 +1834,10 @@ def extra_collate_fn(batch):
     key_to_append_to_list = ["second_per_grid_ts"]
     for key in batch[0].keys():
         items = [sample[key] for sample in batch]
+        for i in range(len(items)):
+            item = items[i]
+            if item is None:
+                print(f"Found NoneType element in batch, key: {key} from {batch["source"][i]}")
         if key in key_to_pad:
             max_length = max([item.shape[1] for item in items])
             padded_tensor = []
