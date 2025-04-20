@@ -1380,7 +1380,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         # get dataset and dataset length
         
         default_parent_dir = "/data_16T/lerobot_openx/"
-        parent_dir = default_collate
+        parent_dir = self.cfg.dataset.parent_dir
         if self.cfg.dataset.parent_dir is None:
             parent_dir = default_parent_dir
         # parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
