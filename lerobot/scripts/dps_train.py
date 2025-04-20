@@ -126,14 +126,14 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed + int(os.environ.get('RANK', 0)))
 
     # Dataset setup
-    # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
-    #                        seed=cfg.seed + int(os.environ.get("RANK", 0)), 
-    #                        data_mix="oxe_magic_soup_plus",
-    #                         # data_mix="env_in_simpler",
-    #                        vla2root_json="vla2root.json")
     dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
-                           seed=cfg.seed + int(os.environ.get("RANK", 0)), data_mix="oxe_magic_soup_plus",
-                           vla2root_json="vla2root_bak_single.json")
+                           seed=cfg.seed + int(os.environ.get("RANK", 0)), 
+                           data_mix="oxe_magic_soup_plus",
+                            # data_mix="env_in_simpler",
+                           vla2root_json="vla2root.json")
+    # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
+    #                        seed=cfg.seed + int(os.environ.get("RANK", 0)), data_mix="oxe_magic_soup_plus",
+    #                        vla2root_json="vla2root_bak_single.json")
     logger.info(f"Dataset: {dataset}")
 
     # Policy setup
