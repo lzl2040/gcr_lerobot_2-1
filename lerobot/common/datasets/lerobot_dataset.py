@@ -1601,6 +1601,10 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
             **vl_item,
         }
         
+        for key, value in data_dict.items():
+            if value is None:
+                print(f"Found NoneType Value at key: {key}, from {data_dict['source']}")
+        
         return data_dict
     
     def _prepare_images(self, item):
