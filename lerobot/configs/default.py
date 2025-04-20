@@ -38,6 +38,8 @@ class DatasetConfig:
     video_backend: str = "pyav"
     default_image_size: int = 224
     default_channel_size: int = 3
+    processor: str = "/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/"
+    parent_dir: str = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
 
 
 @dataclass

@@ -27,12 +27,15 @@ from datetime import datetime
 import datasets
 import numpy as np
 import packaging.version
-import PIL.Image
+import PIL.Image as Image
 import torch
 import torch.utils
 
 from torch.utils.data import ConcatDataset, Subset
 from torch.utils.data.dataloader import default_collate
+
+from transformers import Qwen2_5_VLProcessor
+from qwen_vl_utils import process_vision_info
 
 from datasets import concatenate_datasets, load_dataset, Dataset
 
@@ -93,6 +96,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from tabulate import tabulate
 
 CODEBASE_VERSION = "v2.1"
+PAD_VALUE = {"attention_mask": 0, "input_ids": 151643}
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -802,13 +806,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if vid_key == primary_obs_key:
                 # print(vid_key)
                 frames = decode_video_frames_torchvision(
-                    video_path, query_ts, self.tolerance_s, self.video_backend, return_all=True
+                    video_path, query_ts, self.tolerance_s, self.video_backend, return_all=True, return_type="image"
                 )
+                frames = [frame.resize((112, 112)) for frame in frames]
+                # item[vid_key] = frames
             else:
                 frames = decode_video_frames_torchvision(
-                    video_path, query_ts, self.tolerance_s, self.video_backend
+                    video_path, query_ts, self.tolerance_s, self.video_backend, return_type="image"
                 )
-            item[vid_key] = frames.squeeze(0)
+            # item[vid_key] = frames.squeeze(0)
+            item[vid_key] = frames
 
         return item
 
@@ -883,7 +890,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         return self.root / fpath
 
-    def _save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path) -> None:
+    def _save_image(self, image: torch.Tensor | np.ndarray | Image.Image, fpath: Path) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
                 image = image.cpu().numpy()
@@ -1372,8 +1379,17 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         print(included_datasets, sample_weights)
         # get dataset and dataset length
         
-        # parent_dir = "/data_16T/lerobot_openx/"
-        parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
+        default_parent_dir = "/data_16T/lerobot_openx/"
+        parent_dir = default_collate
+        if self.cfg.dataset.parent_dir is None:
+            parent_dir = default_parent_dir
+        # parent_dir = "/mnt/wangxiaofa/robot_dataset/lerobot-format/"
+        
+        if self.cfg.dataset.processor is not None:
+            self.processor = Qwen2_5_VLProcessor.from_pretrained(self.cfg.dataset.processor)
+            self.processor.tokenizer.padding_side = "left"
+        else:
+            self.processor = None
         
         self.datasets = []
         self.dataset_sizes = []
@@ -1529,19 +1545,35 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 # if missing, use zero image
                 key_to_pad.append(new_key)
                 
+        # if exist_image is not None:
+        #     if exist_image.ndim == 4:
+        #         sample_image = exist_image[0]
+        #     elif exist_image.ndim == 3:
+        #         sample_image = exist_image
+        # else:
+        #     sample_image = torch.zeros((self.cfg.dataset.default_channel_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size), dtype=torch.float32)
+        
+        # for new_key in key_to_pad:
+        #     item[f"observation.images.{new_key}"] = torch.zeros_like(sample_image)
+        #     if new_key == "primary":
+        #         item[f"observation.images.{new_key}"] = item[f"observation.images.{new_key}"].unsqueeze(0)   
+       
+        
         if exist_image is not None:
-            if exist_image.ndim == 4:
-                sample_image = exist_image[0]
-            elif exist_image.ndim == 3:
-                sample_image = exist_image
+            if isinstance(exist_image, list):
+                height, width = exist_image[0].size
+                channel = len(exist_image[0].split())
+                sample_image = Image.fromarray(np.zeros((height, width, channel), dtype=np.uint8))
+            elif isinstance(exist_image, Image.Image):
+                sample_image = exist_image  
         else:
-            sample_image = torch.zeros((self.cfg.dataset.default_channel_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size), dtype=torch.float32)
+            sample_image = Image.fromarray(np.zeros((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
         
         for new_key in key_to_pad:
-            item[f"observation.images.{new_key}"] = torch.zeros_like(sample_image)
+            # item[f"observation.images.{new_key}"] = np.zeros_like(sample_image)
             if new_key == "primary":
-                item[f"observation.images.{new_key}"] = item[f"observation.images.{new_key}"].unsqueeze(0)   
-       
+                item[f"observation.images.{new_key}"] = [Image.fromarray(sample_image)]
+        
         # remove other image keys
         keys = list(item.keys())
         for key in keys:
@@ -1560,7 +1592,141 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         item["action"] = self.pad_vector(item["action"], self.max_action_dim)
         item["observation.state"] = self.pad_vector(item["observation.state"], self.max_state_dim)
         
-        return item
+        vl_item = self._prepare_data(item)
+        
+        data_dict = {
+            "source": item["source"],
+            "observation.state": item["observation.state"],
+            "action": item["action"],
+            **vl_item,
+        }
+        
+        return data_dict
+    
+    def _prepare_images(self, item):
+        vision = {
+            "image": [],
+            "video": None
+        }
+        all_image_keys = ["observation.images.primary", "observation.images.secondary", "observation.images.wrist"]
+        present_img_keys = [key for key in all_image_keys if key in item]
+
+        if len(present_img_keys) == 0:
+            raise ValueError(
+                f"All image features are missing from the batch. At least one expected. (keys: {item.keys()}) (image_features:{all_image_keys})"
+            )
+        
+        for key in present_img_keys:
+            if key == "observation.images.primary":
+                video  = item[key]
+                video_length = len(video)
+                if video_length > self.cfg.policy.max_frame:
+                    vision['video'] = video[-self.cfg.policy.max_frame:]
+                else:
+                    vision['video'] = video
+            else:
+                vision["image"].append(item[key])
+
+        return vision
+
+    def _prepare_language(self, vision, item):
+        def apply_template(text, vision=None):
+            message = [
+                {"role": "user",
+                "content": [
+                    
+                ],}
+            ]
+            if "video" in vision.keys():
+                
+                if vision["video"] is not None:
+                    message[0]["content"].append(
+                        {
+                            "type": "video",
+                            "video": vision["video"],
+                        },
+                    )
+                
+            for i in range(len(vision["image"])):
+                message[0]["content"].append(
+                    {
+                        "type": "image",
+                        "image": vision["image"][i],
+                    }
+                )
+            message[0]["content"].append({"type": "text", "text": text})
+            
+            return self.processor.apply_chat_template(
+                        message, tokenize=False, add_generation_prompt=True
+                    )
+        
+        text = item["task"]
+        
+        template = apply_template(text, vision)
+        
+        return template
+    
+    def _prepare_data(self, item):
+        
+        vision = self._prepare_images(item)
+        task = self._prepare_language(vision, item)
+        
+        text = item["task"]
+        
+        message = [
+            {
+                "role": "user",
+                "content": []
+            }
+        ]
+        
+        video = vision["video"]
+        if video is not None:
+            message[0]["content"].append(
+                {
+                    "type": "video",
+                    "video": video,
+                },
+            )
+        for i in range(len(vision["image"])):
+            message[0]["content"].append(
+                {
+                    "type": "image",
+                    "image": vision["image"][i][0],
+                }
+            )
+        message[0]["content"].append({"type": "text", "text": text})
+
+        image_inputs, video_inputs, video_kwargs = process_vision_info(message, return_video_kwargs=True)
+        
+        inputs = self.processor(
+            text=task,
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors = "pt",
+            **video_kwargs,
+        )
+        
+        input_ids = getattr(inputs, "input_ids", None)
+        attention_mask = getattr(inputs, "attention_mask", None)
+        pixel_values = getattr(inputs, "pixel_values", None)
+        image_grid_thw = getattr(inputs, "image_grid_thw", None)
+        pixel_values_videos = getattr(inputs, "pixel_values_videos", None)
+        video_grid_thw = getattr(inputs, "video_grid_thw", None)
+        second_per_grid_ts = getattr(inputs, "second_per_grid_ts", None)
+        
+        return_dict = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "pixel_values": pixel_values,
+            "image_grid_thw": image_grid_thw,
+            "pixel_values_videos": pixel_values_videos,
+            "video_grid_thw": video_grid_thw,
+            "second_per_grid_ts": second_per_grid_ts,
+        }
+
+        return return_dict
     
     @property
     def num_frames(self) -> int:
@@ -1630,7 +1796,8 @@ def dataset_func_test(cfg: TrainPipelineConfig):
     
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=1
+        collate_fn=extra_collate_fn,
+        batch_size=2
     )
     dl_iter = cycle(dataloader)
     batch = next(dl_iter)
@@ -1640,6 +1807,7 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         print(f"Value type for key {key}: {type(batch[key])}")
         if isinstance(batch[key], list):
             print(f"List elements: {type(batch[key][0])}")
+            print(f"List actual value: {batch[key]}")
     # print(f"Video shape: {batch['observation.images.secondary'].shape}")
 
     # print(dataset)
@@ -1657,18 +1825,49 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         
 def extra_collate_fn(batch):
     collated = {}
+    key_to_pad = ["input_ids", "attention_mask"]
+    key_to_default_collate = ["observation.state", "action"]
+    key_to_append_to_list = ["second_per_grid_ts"]
     for key in batch[0].keys():
         items = [sample[key] for sample in batch]
-        if key == "observation.images.primary":
-            for i in range(len(items)):
-                if items[i].ndim == 3:
-                    items[i] = items[i].unsqueeze(0)
-            collated[key] = torch.nn.utils.rnn.pad_sequence(items, batch_first=True)
-            collated['video_lengths'] = torch.tensor(
-                [v.shape[0] for v in items], dtype=torch.long
-            )
+        if key in key_to_pad:
+            max_length = max([item.shape[1] for item in items])
+            padded_tensor = []
+            for item in items:
+                if item.shape[1] < max_length:
+                    pad_size = max_length - item.shape[1]
+                    padded_tensor.append(torch.nn.functional.pad(item, (pad_size, 0), value=PAD_VALUE[key]))
+                else:
+                    padded_tensor.append(item)
+            item = torch.cat(padded_tensor, dim=0)
+            collated[key] = item
+        elif isinstance(items[0],torch.Tensor) and key not in key_to_default_collate:
+            item = torch.cat(items, dim=0)
+            collated[key] = item
+        elif key in key_to_append_to_list:
+            collated_item = []
+            for item in items:
+                collated_item.append(item[0])
+            collated[key] = collated_item
         else:
             collated[key] = default_collate(items)
+            
+        # observation_keys = ["observation.images.primary", "observation.images.secondary", "observation.images.wrist"]
+        # if key in observation_keys:
+        #     collated[key] = items
+        # else:
+        #     collated[key] = default_collate(items)
+        
+        # if key == "observation.images.primary":
+        #     for i in range(len(items)):
+        #         if items[i].ndim == 3:
+        #             items[i] = items[i].unsqueeze(0)
+        #     collated[key] = torch.nn.utils.rnn.pad_sequence(items, batch_first=True)
+        #     collated['video_lengths'] = torch.tensor(
+        #         [v.shape[0] for v in items], dtype=torch.long
+        #     )
+        # else:
+        #     collated[key] = default_collate(items)
     
     return collated
         

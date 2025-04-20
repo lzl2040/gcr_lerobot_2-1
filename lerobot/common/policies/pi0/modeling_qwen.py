@@ -337,7 +337,15 @@ class QwenPolicy(PreTrainedPolicy):
         # batch = self.normalize_inputs(batch)
         # batch = self.normalize_targets(batch)
         
-        input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts = self.prepare_input(batch)
+        # input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts = self.prepare_input(batch)
+        
+        input_ids = batch["input_ids"]
+        attention_mask = batch["attention_mask"]
+        pixel_values = batch["pixel_values"]
+        image_grid_thw = batch["image_grid_thw"]
+        pixel_values_videos = batch["pixel_values_videos"]
+        video_grid_thw = batch["video_grid_thw"]
+        second_per_grid_ts = batch["second_per_grid_ts"]
         
         actions = self.prepare_action(batch)
         actions = self.convert_to_dtype(actions)
@@ -381,6 +389,7 @@ class QwenPolicy(PreTrainedPolicy):
         """
         
         visions = []
+        device = None
 
         present_img_keys = [key for key in self.config.image_features if key in batch]
         # missing_img_keys = [key for key in self.config.image_features if key not in batch]
@@ -393,7 +402,16 @@ class QwenPolicy(PreTrainedPolicy):
         for key in present_img_keys:
             img_seq = batch[key]
             # print(f"key: {key}, img_seq: {img_seq.shape}")
-            bsize = img_seq.shape[0]
+            # bsize = img_seq.shape[0]
+            if isinstance(img_seq, list):
+                bsize = len(img_seq)
+            elif isinstance(img_seq, torch.Tensor):
+                bsize = img_seq.shape[0]
+            elif isinstance(img_seq, np.ndarray):
+                bsize = img_seq.shape[0]
+            else:
+                raise ValueError(f"Unknown type for img_seq: {type(img_seq)}")
+            break
         for i in range(bsize):
             vision = {
                 "image": [],
@@ -403,39 +421,49 @@ class QwenPolicy(PreTrainedPolicy):
         # Preprocess image features present in the batch
         for key in present_img_keys:
             img_seq = batch[key]
-            device = img_seq.device
+            # device = img_seq.device
             vision = {
                 "image": [],
                 "video": None,
             }
             # If the image sequence is a list, it means we have a video
             # 
-            if img_seq.ndim == 5:
+            if key == "observation.images.primary":
                 for i in range(bsize):
-                    video = []
-                    for j in range(img_seq[i].shape[0]):
-                        img = img_seq[i][j]
-                        img = img.cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
-                        img_pil = Image.fromarray(img).resize((112, 112))
-                        video.append(img_pil)
-                    video_length = batch['video_lengths'][i]
-                    # if int(os.environ.get("RANK", 0)) == 0:
-                    # print(f"video_length: {video_length}, config max frame: {self.config.max_frame}, frames sent in : {img_seq[i].shape[0]}")
-                    
-                    visions[i]["video"] = video[:video_length]
+                    visions[i]['video'] = img_seq[i]
+                    video_length = len(img_seq[i])
                     if video_length > self.config.max_frame:
                         # Sample the video from the ending
-                        visions[i]["video"] = video[-self.config.max_frame:]
-                        
-                    # if int(os.environ.get("RANK", 0)) == 0:
-                    current_video_length = len(visions[i]["video"])
-                    current_frame_size = visions[i]["video"][0].size
-                    # print(f"Video after preprocessing: {current_video_length}, {current_frame_size}")
+                        visions[i]["video"] = img_seq[i][-self.config.max_frame:]
             else:
                 for i in range(bsize):
-                    img = img_seq[i].cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
-                    img = Image.fromarray(img)
-                    visions[i]["image"].append(img)
+                    visions[i]['image'].append(img_seq[i][0])
+            # if img_seq.ndim == 5:
+            #     for i in range(bsize):
+            #         video = []
+            #         for j in range(img_seq[i].shape[0]):
+            #             img = img_seq[i][j]
+            #             img = img.cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
+            #             img_pil = Image.fromarray(img).resize((112, 112))
+            #             video.append(img_pil)
+            #         video_length = batch['video_lengths'][i]
+            #         # if int(os.environ.get("RANK", 0)) == 0:
+            #         # print(f"video_length: {video_length}, config max frame: {self.config.max_frame}, frames sent in : {img_seq[i].shape[0]}")
+                    
+            #         visions[i]["video"] = video[:video_length]
+            #         if video_length > self.config.max_frame:
+            #             # Sample the video from the ending
+            #             visions[i]["video"] = video[-self.config.max_frame:]
+                        
+            #         # if int(os.environ.get("RANK", 0)) == 0:
+            #         current_video_length = len(visions[i]["video"])
+            #         current_frame_size = visions[i]["video"][0].size
+            #         # print(f"Video after preprocessing: {current_video_length}, {current_frame_size}")
+            # else:
+            #     for i in range(bsize):
+            #         img = img_seq[i].cpu().numpy().astype(np.uint8).transpose(1, 2, 0)
+            #         img = Image.fromarray(img)
+            #         visions[i]["image"].append(img)
 
         return visions, bsize, device
 
@@ -482,6 +510,8 @@ class QwenPolicy(PreTrainedPolicy):
         """Prepare the input for the model"""
         
         visions, bsize, device = self.prepare_images(batch)
+        if device is None:
+            device = self.model.paligemma_with_expert.qwen25vl.device
         tasks = self.prepare_language(batch, visions)
         texts = batch["task"]
         messages = []
@@ -721,6 +751,7 @@ class   QwenFlowMatching(nn.Module):
                 or self.paligemma_with_expert.qwen25vl.rope_deltas is None
                 or (past_key_values is None or past_key_values.get_seq_length() == 0)
             ):
+                # print(f"input_ids: {input_ids.shape}, image_grid_thw: {image_grid_thw.shape}, video_grid_thw: {video_grid_thw.shape}, second_per_grid_ts: {len(second_per_grid_ts)}-{second_per_grid_ts}, attention_mask: {attention_mask.shape}")
                 position_ids, rope_deltas = self.paligemma_with_expert.qwen25vl.get_rope_index(
                     input_ids = input_ids,
                     image_grid_thw = image_grid_thw,

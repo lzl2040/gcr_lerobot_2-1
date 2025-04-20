@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
+import numpy as np
 import pyarrow as pa
 import torch
 import torchvision
@@ -36,6 +37,7 @@ def decode_video_frames_torchvision(
     backend: str = "pyav",
     log_loaded_timestamps: bool = False,
     return_all: bool = False,
+    return_type: str = "tensor",
 ) -> torch.Tensor:
     """Loads frames associated to the requested timestamps of a video
 
@@ -117,29 +119,53 @@ def decode_video_frames_torchvision(
             f"\nbackend: {backend}"
         )
 
-        # get closest frames to the query timestamps
-        closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
-        closest_ts = loaded_ts[argmin_]
+        if return_type == "tensor":
+            # get closest frames to the query timestamps
+            closest_frames = torch.stack([loaded_frames[idx] for idx in argmin_])
+            closest_ts = loaded_ts[argmin_]
 
-        if log_loaded_timestamps:
-            logging.info(f"{closest_ts=}")
+            if log_loaded_timestamps:
+                logging.info(f"{closest_ts=}")
 
-        # convert to the pytorch format which is float32 in [0,1] range (and channel first)
-        # closest_frames = closest_frames.type(torch.float32) / 255
-
-        assert len(timestamps) == len(closest_frames)
-        
-        return closest_frames
+            # convert to the pytorch format which is float32 in [0,1] range (and channel first)
+            # closest_frames = closest_frames.type(torch.float32) / 255
+            assert len(timestamps) == len(closest_frames)
+            
+            return closest_frames
+        elif return_type == "image":
+            image_list = []
+            for idx in argmin_:
+                img = Image.fromarray(loaded_frames[idx].numpy().astype(np.uint8).transpose(1, 2, 0))
+                image_list.append(img)
+            return image_list
+        elif return_type == "numpy":
+            image_list = []
+            for idx in argmin_:
+                img = loaded_frames[idx].numpy().astype(np.uint8).transpose(1, 2, 0)
+                image_list.append(img)
+            return image_list
     else:
-        loaded_ts = torch.tensor(loaded_ts)
-        closest_frames = torch.stack(loaded_frames)
-        # closest_frames = closest_frames.type(torch.float32) / 255
-        
-        if log_loaded_timestamps:
-            logging.info(f"{loaded_ts=}")
-        
-        return closest_frames
-
+        if return_type == "tensor":
+            loaded_ts = torch.tensor(loaded_ts)
+            closest_frames = torch.stack(loaded_frames)
+            # closest_frames = closest_frames.type(torch.float32) / 255
+            
+            if log_loaded_timestamps:
+                logging.info(f"{loaded_ts=}")
+            
+            return closest_frames
+        elif return_type == "image":
+            image_list = []
+            for idx in range(len(loaded_frames)):
+                img = Image.fromarray(loaded_frames[idx].numpy().astype(np.uint8).transpose(1, 2, 0))
+                image_list.append(img)
+            return image_list
+        elif return_type == "numpy":
+            image_list = []
+            for idx in range(len(loaded_frames)):
+                img = loaded_frames[idx].numpy().astype(np.uint8).transpose(1, 2, 0)
+                image_list.append(img)
+            return image_list
 
 def encode_video_frames(
     imgs_dir: Path | str,

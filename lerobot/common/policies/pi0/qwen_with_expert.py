@@ -530,19 +530,32 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 all_hidden_states += (hidden_states,)
                 
             if self.gradient_checkpointing and self.training:
-                layer_outputs = checkpoint(
-                    self.custom_decoder_forward,
-                    decoder_layer,
-                    hidden_states,
-                    causal_mask,
-                    position_ids,
-                    past_key_values,
-                    output_attentions,
-                    use_cache,
-                    cache_position,
-                    position_embeddings,
-                    use_reentrant=False,
-                )
+                if layer_idx % 14 == 0:
+                    layer_outputs = checkpoint(
+                        self.custom_decoder_forward,
+                        decoder_layer,
+                        hidden_states,
+                        causal_mask,
+                        position_ids,
+                        past_key_values,
+                        output_attentions,
+                        use_cache,
+                        cache_position,
+                        position_embeddings,
+                        use_reentrant=False,
+                    )
+                else:
+                    layer_outputs = self.custom_decoder_forward(
+                        decoder_layer,
+                        hidden_states,
+                        causal_mask,
+                        position_ids,
+                        past_key_values,
+                        output_attentions,
+                        use_cache,
+                        cache_position,
+                        position_embeddings
+                    )
             else:
                 layer_outputs = decoder_layer(
                     hidden_states,

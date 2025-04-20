@@ -96,6 +96,7 @@ def update_policy(
 
     model_engine.backward(loss)
     model_engine.step()
+    # torch.cuda.empty_cache()
     return loss, output_dict
 
 
@@ -125,14 +126,14 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed + int(os.environ.get('RANK', 0)))
 
     # Dataset setup
-    dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
-                           seed=cfg.seed + int(os.environ.get("RANK", 0)), 
-                           data_mix="oxe_magic_soup_plus",
-                            # data_mix="env_in_simpler",
-                           vla2root_json="vla2root.json")
     # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
-    #                        seed=cfg.seed + int(os.environ.get("RANK", 0)), data_mix="oxe_magic_soup_plus",
-    #                        vla2root_json="vla2root_bak_single.json")
+    #                        seed=cfg.seed + int(os.environ.get("RANK", 0)), 
+    #                        data_mix="oxe_magic_soup_plus",
+    #                         # data_mix="env_in_simpler",
+    #                        vla2root_json="vla2root.json")
+    dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
+                           seed=cfg.seed + int(os.environ.get("RANK", 0)), data_mix="oxe_magic_soup_plus",
+                           vla2root_json="vla2root_bak_single.json")
     logger.info(f"Dataset: {dataset}")
 
     # Policy setup
@@ -197,7 +198,7 @@ def train(cfg: TrainPipelineConfig):
     dataloader = DataLoader(dataset=dataset,
                             batch_size=batch_size,
                             sampler=sampler,
-                            num_workers=4,
+                            num_workers=8,
                             pin_memory=True,
                             collate_fn=extra_collate_fn,
                             persistent_workers=True,
