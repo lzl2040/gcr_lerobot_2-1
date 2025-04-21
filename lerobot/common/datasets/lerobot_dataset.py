@@ -1731,7 +1731,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
             message[0]["content"].append(
                 {
                     "type": "image",
-                    "image": vision["image"][i][0],
+                    "image": vision["image"][i],
                 }
             )
         message[0]["content"].append({"type": "text", "text": text})
@@ -1842,20 +1842,23 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         else:
             print(f"{key}: {value}")
     
-    # dataloader = torch.utils.data.DataLoader(
-    #     dataset,
-    #     collate_fn=extra_collate_fn,
-    #     batch_size=2
-    # )
-    # dl_iter = cycle(dataloader)
-    # batch = next(dl_iter)
-    # keys = list(batch.keys())
-    # print(f"batch:{keys}")
-    # for key in keys:
-    #     print(f"Value type for key {key}: {type(batch[key])}")
-    #     if isinstance(batch[key], list):
-    #         print(f"List elements: {type(batch[key][0])}")
-    #         print(f"List actual value: {batch[key]}")
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        collate_fn=extra_collate_fn,
+        batch_size=2
+    )
+    dl_iter = cycle(dataloader)
+    batch = next(dl_iter)
+    keys = list(batch.keys())
+    print(f"batch:{keys}")
+    for key in keys:
+        print(f"Value type for key {key}: {type(batch[key])}")
+        if isinstance(batch[key], torch.Tensor):
+            print(f"Tensor shape: {batch[key].shape}")
+        
+        if isinstance(batch[key], list):
+            print(f"List elements: {type(batch[key][0])}")
+            print(f"List actual value: {batch[key]}")
     # print(f"Video shape: {batch['observation.images.secondary'].shape}")
 
     # print(dataset)
