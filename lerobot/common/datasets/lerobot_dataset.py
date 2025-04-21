@@ -1523,7 +1523,12 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
     def __getitem__(self, index):
         # v2
         none_flag = True
+        max_retry = 20
+        retry = 0
         while none_flag:
+            if retry > max_retry:
+                break
+            retry += 1
             selected_dataset = random.choices(self.datasets, weights=self.sample_weights, k=1)[0]
             dataset_index = self.datasets.index(selected_dataset)
             dataset_name = self.dataset_names[dataset_index]

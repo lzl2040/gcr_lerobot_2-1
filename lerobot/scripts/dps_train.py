@@ -99,7 +99,7 @@ def update_policy(
                 if vv is None:
                    none_flag=True
         if none_flag:
-            logger.info(f"Found NoneType Value in batch, key: {k} \nvalue: {v}")
+            print(f"Found NoneType Value in batch, key: {k} \nvalue: {v}")
     # torch.cuda.empty_cache()
     loss, output_dict = model_engine(batch)
 
