@@ -1585,17 +1585,19 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 if len(exist_image) > 0:
                     height, width = exist_image[0].size
                     channel = len(exist_image[0].split())
-                    sample_image = Image.fromarray(np.zeros((height, width, channel), dtype=np.uint8))
+                    sample_image = Image.fromarray(np.ones((height, width, channel), dtype=np.uint8))
                     exist_image_valide = True
             elif isinstance(exist_image, Image.Image):
-                sample_image = exist_image  
+                height, width = exist_image.size
+                channel = len(exist_image.split())
+                sample_image = Image.fromarray(np.ones((height, width, channel), dtype=np.uint8))
                 exist_image_valide = True
         
         if not exist_image_valide:
             sample_image = Image.fromarray(np.ones((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
         
         for new_key in key_to_pad:
-            item[f"observation.images.{new_key}"] = Image.fromarray(sample_image)
+            item[f"observation.images.{new_key}"] = sample_image
             if new_key == "primary":
                 item[f"observation.images.{new_key}"] = [item[f"observation.images.{new_key}"]]
         
