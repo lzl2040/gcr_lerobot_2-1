@@ -1549,6 +1549,17 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                     print(f"Found NoneType Value at key: {key}, from {data_dict['source']}, refetch data")
                     none_flag = True
                     break
+                elif isinstance(value, list):
+                    if len(value) == 0:
+                        print(f"Found Empty List at key: {key}, from {data_dict['source']}, refetch data")
+                        none_flag = True
+                        break
+                    else:
+                        for v in value:
+                            if v is None:
+                                print(f"Found NoneType Value in List at key: {key}, from {data_dict['source']}, refetch data")
+                                none_flag = True
+                                break
         
         return data_dict
     
