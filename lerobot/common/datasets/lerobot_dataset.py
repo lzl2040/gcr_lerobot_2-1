@@ -151,7 +151,7 @@ class LeRobotDatasetMetadata:
             self.pull_from_repo(allow_patterns="meta/")
             self.load_metadata()
             
-    def restrict_image_features(self, features: dict[str, dict], max_feature=5) -> dict[str, dict]:
+    def restrict_image_features(self, features: dict[str, dict], max_feature=8) -> dict[str, dict]:
         """Restricts the number of image features to a maximum number."""
         image_features = {k: v for k, v in features.items() if v["dtype"] in ["image", "video"]}
         if len(image_features) > max_feature:
@@ -1522,17 +1522,33 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         # v2
-        selected_dataset = random.choices(self.datasets, weights=self.sample_weights, k=1)[0]
-        dataset_index = self.datasets.index(selected_dataset)
-        dataset_name = self.dataset_names[dataset_index]
-        data_config = OXE_DATASET_CONFIGS[dataset_name]
-        indices = self.selected_indices[dataset_index] # the selected indices of this dataset
-        selected_id = random.choice(indices) # equal prob
+        none_flag = True
+        while none_flag:
+            selected_dataset = random.choices(self.datasets, weights=self.sample_weights, k=1)[0]
+            dataset_index = self.datasets.index(selected_dataset)
+            dataset_name = self.dataset_names[dataset_index]
+            data_config = OXE_DATASET_CONFIGS[dataset_name]
+            indices = self.selected_indices[dataset_index] # the selected indices of this dataset
+            selected_id = random.choice(indices) # equal prob
+            
+            image_obs_keys = data_config["image_obs_keys"]
+            
+            item = selected_dataset[selected_id]
+            item['dataset_name'] = dataset_name
+            
+            data_dict = self._fetch_data_dict(item, image_obs_keys)
+            
+            none_flag = False
+            for key, value in data_dict.items():
+                if value is None:
+                    print(f"Found NoneType Value at key: {key}, from {data_dict['source']}, refetch data")
+                    none_flag = True
+                    break
         
-        item = selected_dataset[selected_id]
-        item['dataset_name'] = dataset_name
+        return data_dict
+    
+    def _fetch_data_dict(self, item, image_obs_keys):
         
-        image_obs_keys = data_config["image_obs_keys"]
         exist_image = None
         key_to_pad = []
         for new_key, old_key in image_obs_keys.items():
@@ -1545,20 +1561,6 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
             else:
                 # if missing, use zero image
                 key_to_pad.append(new_key)
-                
-        # if exist_image is not None:
-        #     if exist_image.ndim == 4:
-        #         sample_image = exist_image[0]
-        #     elif exist_image.ndim == 3:
-        #         sample_image = exist_image
-        # else:
-        #     sample_image = torch.zeros((self.cfg.dataset.default_channel_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size), dtype=torch.float32)
-        
-        # for new_key in key_to_pad:
-        #     item[f"observation.images.{new_key}"] = torch.zeros_like(sample_image)
-        #     if new_key == "primary":
-        #         item[f"observation.images.{new_key}"] = item[f"observation.images.{new_key}"].unsqueeze(0)   
-       
         
         if exist_image is not None:
             if isinstance(exist_image, list):
@@ -1601,10 +1603,6 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
             "action": item["action"],
             **vl_item,
         }
-        
-        for key, value in data_dict.items():
-            if value is None:
-                print(f"Found NoneType Value at key: {key}, from {data_dict['source']}")
         
         return data_dict
     
