@@ -138,8 +138,8 @@ def train(cfg: TrainPipelineConfig):
     dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
                            seed=cfg.seed + int(os.environ.get("RANK", 0)), 
                            data_mix="oxe_magic_soup_plus",
-                           vla2root_json="vla2root_bak_single.json",
-                        #    vla2root_json="vla2root.json"
+                        #    vla2root_json="vla2root_bak_single.json",
+                           vla2root_json="vla2root.json"
                            )
     # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
     #                        seed=cfg.seed + int(os.environ.get("RANK", 0)), data_mix="oxe_magic_soup_plus",

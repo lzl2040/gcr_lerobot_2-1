@@ -13,8 +13,8 @@
         "overlap_comm": true,
         "contiguous_gradients": true,
         "reduce_scatter": true,
-        "reduce_bucket_size": 5.5e8,
-        "allgather_bucket_size": 8e8,
+        "reduce_bucket_size": 8e8,
+        "allgather_bucket_size": 1.6e9,
         "round_robin_gradients": false
     }
 }
