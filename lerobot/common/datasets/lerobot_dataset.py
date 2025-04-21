@@ -17,6 +17,7 @@ import contextlib
 import logging
 import random
 import json
+import copy
 import os
 import shutil
 import polars as pl
@@ -849,7 +850,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if query_indices is not None:
                 video_frames = self._query_videos(query_timestamps, ep_idx, primary_obs_key=primary_obs_key)
             else:
-                video_frames = self._query_videos(query_timestamps, ep_idx)
+                video_frames = self._query_videos(query_timestamps, ep_idx, primary_obs_key=primary_obs_key)
             item = {**video_frames, **item}
 
         if self.image_transforms is not None:
@@ -1523,7 +1524,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
     def __getitem__(self, index):
         # v2
         none_flag = True
-        max_retry = 20
+        max_retry = 100
         retry = 0
         while none_flag:
             if retry > max_retry:
@@ -1570,7 +1571,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         for new_key, old_key in image_obs_keys.items():
             if old_key != None:
                 
-                item[f"observation.images.{new_key}"] = item[f"observation.images.{old_key}"]
+                item[f"observation.images.{new_key}"] = copy.deepcopy(item[f"observation.images.{old_key}"])
                 exist_image = item[f"observation.images.{old_key}"]
                 
                 del item[f"observation.images.{old_key}"]
@@ -1578,20 +1579,25 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 # if missing, use zero image
                 key_to_pad.append(new_key)
         
+        exist_image_valide = False
         if exist_image is not None:
             if isinstance(exist_image, list):
-                height, width = exist_image[0].size
-                channel = len(exist_image[0].split())
-                sample_image = Image.fromarray(np.zeros((height, width, channel), dtype=np.uint8))
+                if len(exist_image) > 0:
+                    height, width = exist_image[0].size
+                    channel = len(exist_image[0].split())
+                    sample_image = Image.fromarray(np.zeros((height, width, channel), dtype=np.uint8))
+                    exist_image_valide = True
             elif isinstance(exist_image, Image.Image):
                 sample_image = exist_image  
-        else:
-            sample_image = Image.fromarray(np.zeros((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
+                exist_image_valide = True
+        
+        if not exist_image_valide:
+            sample_image = Image.fromarray(np.ones((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
         
         for new_key in key_to_pad:
-            # item[f"observation.images.{new_key}"] = np.zeros_like(sample_image)
+            item[f"observation.images.{new_key}"] = Image.fromarray(sample_image)
             if new_key == "primary":
-                item[f"observation.images.{new_key}"] = [Image.fromarray(sample_image)]
+                item[f"observation.images.{new_key}"] = [item[f"observation.images.{new_key}"]]
         
         # remove other image keys
         keys = list(item.keys())
@@ -1637,14 +1643,26 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         
         for key in present_img_keys:
             if key == "observation.images.primary":
-                video  = item[key]
-                video_length = len(video)
+                if isinstance(item[key], list):
+                    video  = item[key]
+                    video_length = len(video)
+                elif isinstance(item[key], Image.Image):
+                    video = [item[key]]
+                    video_length = 1
+                else:
+                    logging.warning(f"Unexpected type for observation.images.primary: {type(item[key])}, from {item['source']}")
                 if video_length > self.cfg.policy.max_frame:
                     vision['video'] = video[-self.cfg.policy.max_frame:]
                 else:
                     vision['video'] = video
             else:
-                vision["image"].append(item[key])
+                if isinstance(item[key], list):
+                    if len(item[key]) > 0:
+                        vision["image"].append(item[key][0])
+                elif isinstance(item[key], Image.Image):
+                    vision["image"].append(item[key])
+                else:
+                    logging.warning(f"Unexpected type for {key}: {type(item[key])}, from {item['source']}")
 
         return vision
 
@@ -1800,6 +1818,8 @@ def resolve_delta_timestamps(
 @parser.wrap()
 def dataset_func_test(cfg: TrainPipelineConfig):
     cfg.validate()
+    cfg.dataset.parent_dir="/data_16T/lerobot_openx/"
+    cfg.dataset.processor="/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
     
     image_transforms = (
         ImageTransforms(cfg.dataset.image_transforms)
@@ -1813,20 +1833,27 @@ def dataset_func_test(cfg: TrainPipelineConfig):
         vla2root_json="vla2root_bak_single.json"
     )
     
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        collate_fn=extra_collate_fn,
-        batch_size=2
-    )
-    dl_iter = cycle(dataloader)
-    batch = next(dl_iter)
-    keys = list(batch.keys())
-    print(f"batch:{keys}")
-    for key in keys:
-        print(f"Value type for key {key}: {type(batch[key])}")
-        if isinstance(batch[key], list):
-            print(f"List elements: {type(batch[key][0])}")
-            print(f"List actual value: {batch[key]}")
+    item = dataset[0]
+    for key, value in item.items():
+        if isinstance(value, torch.Tensor):
+            print(f"{key}: {value.shape}")
+        else:
+            print(f"{key}: {value}")
+    
+    # dataloader = torch.utils.data.DataLoader(
+    #     dataset,
+    #     collate_fn=extra_collate_fn,
+    #     batch_size=2
+    # )
+    # dl_iter = cycle(dataloader)
+    # batch = next(dl_iter)
+    # keys = list(batch.keys())
+    # print(f"batch:{keys}")
+    # for key in keys:
+    #     print(f"Value type for key {key}: {type(batch[key])}")
+    #     if isinstance(batch[key], list):
+    #         print(f"List elements: {type(batch[key][0])}")
+    #         print(f"List actual value: {batch[key]}")
     # print(f"Video shape: {batch['observation.images.secondary'].shape}")
 
     # print(dataset)

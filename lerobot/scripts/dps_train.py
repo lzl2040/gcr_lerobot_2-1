@@ -92,14 +92,7 @@ def update_policy(
 ) -> tuple[MetricsTracker, dict]:
     
     batch = {k: v.to(model_engine.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-    for k,v in batch.items():
-        none_flag = False
-        if isinstance(v, list):
-            for vv in v:
-                if vv is None:
-                   none_flag=True
-        if none_flag:
-            print(f"Found NoneType Value in batch, key: {k} \nvalue: {v}")
+    
     # torch.cuda.empty_cache()
     loss, output_dict = model_engine(batch)
 
