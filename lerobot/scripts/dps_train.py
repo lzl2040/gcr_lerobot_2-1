@@ -88,9 +88,18 @@ def init_logger(cfg):
 def update_policy(
     model_engine,
     batch: Any,
+    logger
 ) -> tuple[MetricsTracker, dict]:
     
     batch = {k: v.to(model_engine.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+    for k,v in batch.items():
+        none_flag = False
+        if isinstance(v, list):
+            for vv in v:
+                if vv is None:
+                   none_flag=True
+        if none_flag:
+            logger.info(f"Found NoneType Value in batch, key: {k} \nvalue: {v}")
     # torch.cuda.empty_cache()
     loss, output_dict = model_engine(batch)
 
@@ -129,8 +138,9 @@ def train(cfg: TrainPipelineConfig):
     dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
                            seed=cfg.seed + int(os.environ.get("RANK", 0)), 
                            data_mix="oxe_magic_soup_plus",
-                            # data_mix="env_in_simpler",
-                           vla2root_json="vla2root.json")
+                           vla2root_json="vla2root_bak_single.json",
+                        #    vla2root_json="vla2root.json"
+                           )
     # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
     #                        seed=cfg.seed + int(os.environ.get("RANK", 0)), data_mix="oxe_magic_soup_plus",
     #                        vla2root_json="vla2root_bak_single.json")
@@ -285,7 +295,8 @@ def train(cfg: TrainPipelineConfig):
         fwd_bwd_start = time.perf_counter()
         loss, output_dict = update_policy(
             model_engine,
-            batch
+            batch,
+            logger
         )
         step += 1
         fwd_bwd_time += time.perf_counter() - fwd_bwd_start
