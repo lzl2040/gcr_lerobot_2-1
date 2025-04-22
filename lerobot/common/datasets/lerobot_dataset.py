@@ -1568,8 +1568,14 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         
         exist_image = None
         key_to_pad = []
+        new_keys = []
         for new_key, old_key in image_obs_keys.items():
+            new_keys.append(f"observation.images.{new_key}")
             if old_key != None:
+                
+                if isinstance(item[f"observation.images.{old_key}"], list):
+                    if not len(item[f"observation.images.{old_key}"]):
+                        key_to_pad.append(new_key)
                 
                 item[f"observation.images.{new_key}"] = copy.deepcopy(item[f"observation.images.{old_key}"])
                 exist_image = item[f"observation.images.{old_key}"]
@@ -1596,15 +1602,17 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         if not exist_image_valide:
             sample_image = Image.fromarray(np.ones((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
         
+        # print(sample_image)
+        
         for new_key in key_to_pad:
-            item[f"observation.images.{new_key}"] = sample_image
+            item[f"observation.images.{new_key}"] = copy.deepcopy(sample_image)
             if new_key == "primary":
                 item[f"observation.images.{new_key}"] = [item[f"observation.images.{new_key}"]]
         
         # remove other image keys
         keys = list(item.keys())
         for key in keys:
-            if "images" in key and key not in self.new_obs_image_keys:
+            if "images" in key and key not in new_keys:
                 del item[key]
                 
         # add the dataset source
