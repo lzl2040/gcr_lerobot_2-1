@@ -201,11 +201,11 @@ def train(cfg: TrainPipelineConfig):
     dataloader = DataLoader(dataset=dataset,
                             batch_size=batch_size,
                             sampler=sampler,
-                            num_workers=8,
+                            num_workers=4,
                             pin_memory=True,
                             collate_fn=extra_collate_fn,
                             persistent_workers=True,
-                            prefetch_factor=4
+                            prefetch_factor=2
                             )
     # DeepSpeed initialization
     # model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
