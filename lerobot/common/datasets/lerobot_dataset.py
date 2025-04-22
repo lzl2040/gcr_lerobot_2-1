@@ -1654,7 +1654,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         for key in present_img_keys:
             if key == "observation.images.primary":
                 if isinstance(item[key], list):
-                    video  = item[key]
+                    video = item[key]
                     video_length = len(video)
                 elif isinstance(item[key], Image.Image):
                     video = [item[key]]
@@ -1665,6 +1665,11 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                     vision['video'] = video[-self.cfg.policy.max_frame:]
                 else:
                     vision['video'] = video
+                
+                # Resize frames in the video
+                for i in range(len(vision['video'])):
+                    vision["video"][i] = vision["video"][i].resize((112, 112))
+                
             else:
                 if isinstance(item[key], list):
                     if len(item[key]) > 0:
@@ -1889,16 +1894,6 @@ def extra_collate_fn(batch):
     key_to_append_to_list = ["second_per_grid_ts"]
     for key in batch[0].keys():
         items = [sample[key] for sample in batch]
-        none_flag=False
-        for i in range(len(items)):
-            item = items[i]
-            if item is None:
-                print(f"""Found NoneType element in batch, key: {key} from {batch[i]['source']}""")
-                none_flag=True
-                break
-        if none_flag:    
-            collated[key] = item
-            continue
             
         if key in key_to_pad:
             max_length = max([item.shape[1] for item in items])
@@ -1921,23 +1916,6 @@ def extra_collate_fn(batch):
             collated[key] = collated_item
         else:
             collated[key] = default_collate(items)
-            
-        # observation_keys = ["observation.images.primary", "observation.images.secondary", "observation.images.wrist"]
-        # if key in observation_keys:
-        #     collated[key] = items
-        # else:
-        #     collated[key] = default_collate(items)
-        
-        # if key == "observation.images.primary":
-        #     for i in range(len(items)):
-        #         if items[i].ndim == 3:
-        #             items[i] = items[i].unsqueeze(0)
-        #     collated[key] = torch.nn.utils.rnn.pad_sequence(items, batch_first=True)
-        #     collated['video_lengths'] = torch.tensor(
-        #         [v.shape[0] for v in items], dtype=torch.long
-        #     )
-        # else:
-        #     collated[key] = default_collate(items)
     
     return collated
         
