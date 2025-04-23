@@ -85,6 +85,16 @@ def init_logger(cfg):
     
     return logger
 
+def rank_dataloader_check(model_engine, batch):
+    batch = {k: v.to(model_engine.device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            print(f"{key}: {value.shape}, {value.dtype}, {value.device}")
+        elif isinstance(value, list):
+            print(f"{key}: {len(value)}, example: {value[0]}")
+        else:
+            print(f"{key}: {value}")
+            
 def update_policy(
     model_engine,
     batch: Any,
@@ -201,7 +211,7 @@ def train(cfg: TrainPipelineConfig):
     dataloader = DataLoader(dataset=dataset,
                             batch_size=batch_size,
                             sampler=sampler,
-                            num_workers=3,
+                            num_workers=6,
                             pin_memory=True,
                             collate_fn=extra_collate_fn,
                             persistent_workers=True,
@@ -248,6 +258,10 @@ def train(cfg: TrainPipelineConfig):
         }
         
     dl_iter = cycle(dataloader)
+    
+    for i in range(5):
+        batch = next(dl_iter)
+        rank_dataloader_check(model_engine, batch)
 
     # Metrics setup
     train_metrics = {

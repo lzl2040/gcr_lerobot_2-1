@@ -15,7 +15,9 @@ from transformers import (
     PretrainedConfig,
     PreTrainedModel,
 )
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLAttention
 import transformers.modeling_outputs
+from transformers.modeling_flash_attention_utils import _flash_attention_forward
 from transformers.processing_utils import Unpack
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
 from transformers.models.auto import CONFIG_MAPPING
@@ -81,6 +83,50 @@ def apply_rope(x, positions, max_wavelength=10_000):
     res[..., d_half:] = x2 * cos + x1 * sin
 
     return res.to(dtype)
+
+def apply_multimodal_rotary_pos_emb(q, k, cos, sin, mrope_section, unsqueeze_dim=1):
+    """Applies Rotary Position Embedding with Multimodal Sections to the query and key tensors (https://qwenlm.github.io/blog/qwen2-vl/).
+
+    Explanation:
+        Multimodal 3D rotary position embedding is an extension to 1D rotary position embedding. The input embedding
+        sequence contains vision (images / videos) embedding and text embedding or just contains text embedding. For
+        vision embedding part, we apply rotary position embedding on temporal, height and width dimension separately.
+        Here we split the channel dimension to 3 chunks for the temporal, height and width rotary position embedding.
+        For text embedding part, we just apply 1D rotary position embedding. The three rotary position index (temporal,
+        height and width) of text embedding is always the same, so the text embedding rotary position embedding has no
+        difference with modern LLMs.
+
+    Args:
+        q (`torch.Tensor`): The query tensor.
+        k (`torch.Tensor`): The key tensor.
+        cos (`torch.Tensor`): The cosine part of the rotary embedding.
+        sin (`torch.Tensor`): The sine part of the rotary embedding.
+        position_ids (`torch.Tensor`):
+            The position indices of the tokens corresponding to the query and key tensors. For example, this can be
+            used to pass offsetted position ids when working with a KV-cache.
+        mrope_section(`List(int)`):
+            Multimodal rope section is for channel dimension of temporal, height and width in rope calculation.
+        unsqueeze_dim (`int`, *optional*, defaults to 1):
+            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+    Returns:
+        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+    """
+    mrope_section = mrope_section * 2
+    cos = torch.cat([m[i % 3] for i, m in enumerate(cos.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+        unsqueeze_dim
+    )
+    sin = torch.cat([m[i % 3] for i, m in enumerate(sin.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+        unsqueeze_dim
+    )
+
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
 
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
@@ -301,10 +347,31 @@ class DimensionalSqueezeBack(nn.Module):
 
         return x
     
-class KVCompress(nn.Module):
-    def __init__(self, in_dim=4, out_dim=2):
+class Qwen2RMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        """
+        Qwen2RMSNorm is equivalent to T5LayerNorm
+        """
         super().__init__()
-        self.linear = nn.Linear(in_dim, out_dim)
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+    def extra_repr(self):
+        return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
+    
+class KVCompress(nn.Module):
+    def __init__(self, in_dim=4, out_dim=2, hiddem_dim=128):
+        super().__init__()
+        self.linear = nn.Linear(in_dim*hiddem_dim, out_dim*hiddem_dim)
+        self.norm = Qwen2RMSNorm(hidden_size=out_dim*hiddem_dim)
+        self.activation = nn.SiLU()
         self.in_dim = in_dim
         self.out_dim = out_dim
     
@@ -314,10 +381,13 @@ class KVCompress(nn.Module):
         for x in t:
             batch, num_kv_heads, seq_len, head_dim = x.shape
             assert num_kv_heads == self.in_dim, f"num_kv_heads must be equal to in_dim, which is {self.in_dim}, but got {num_kv_heads}."
-            x = x.reshape(-1, num_kv_heads)  # 合并维度 -> [128*B*S, 4]
+            x = x.reshape(-1, num_kv_heads*head_dim)  # 合并维度 -> [B*S, 4*128]
 
             # 线性变换压缩特征维度
-            x = self.linear(x)          # -> [4*868, 2048]
+            x = self.linear(x)          # -> [B*S, 2*128]
+            x = self.norm(x)
+            
+            x = self.activation(x)
             
             x = x.view(batch, self.out_dim, seq_len, head_dim)  # 恢复形状 -> [4, 868, 2048]
             new_t.append(x)
@@ -332,6 +402,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
     def __init__(self, config: PaliGemmaWithExpertConfig, init_load = False, init_path = None):
         super().__init__(config=config)
+        self.cross_forward_flag = True
         self.config = config
         self.gradient_checkpointing = True
         # print(config.qwen25vl_config)
@@ -345,6 +416,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         self.qwen_expert = Qwen2ForCausalLM(config=config.qwenexp_config)
         
         self.kv_compress = KVCompress(in_dim=4, out_dim=2)
+        
+        self.num_layers = self.config.qwen25vl_config.num_hidden_layers
         
         # Remove unused embed_tokens
         self.qwen_expert.model.embed_tokens = None
@@ -423,50 +496,244 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         use_cache: Optional[bool] = None,
         fill_kv_cache: Optional[bool] = None,
     ):
+        if not self.cross_forward_flag:
+            models = [self.qwen25vl.model, self.qwen_expert.model]
+            
+            outputs_embeds = []
+
+            for i, hidden_states in enumerate(inputs_embeds):
+                # TODO this is very inefficient
+                # dtype is always the same, batch size too (if > 1 len)
+                # device could be trickier in multi gpu edge cases but that's it
+                if hidden_states is None:
+                    continue
+                
+                if i == 0:
+                    outputs = models[i].forward(
+                        input_ids = None,
+                        position_ids = position_ids,
+                        attention_mask = attention_mask,
+                        past_key_values = past_key_values,
+                        inputs_embeds = hidden_states,
+                        use_cache = use_cache,
+                        output_hidden_states=True
+                    )
+                    outputs_embeds.append(outputs.hidden_states[-1])
+                    if use_cache and past_key_values is None:
+                        
+                        outputs.past_key_values.key_cache = self.kv_compress(outputs.past_key_values.key_cache)
+                        outputs.past_key_values.value_cache = self.kv_compress(outputs.past_key_values.value_cache)
+                        past_key_values = outputs.past_key_values
+                        # print(f"past_key_values: {past_key_values.key_cache[0].shape}")
+                elif i == 1:
+                    # print(f"attention_mask: {attention_mask.shape}, {attention_mask[:, -1].sum().item()}")
+                    # print(f"input tensor :{hidden_states.size()},  {hidden_states.size()[0]}")
+                    outputs = self.expert_forward(
+                        input_ids = None,
+                        position_ids = None,
+                        attention_mask = attention_mask,
+                        past_key_values = past_key_values,
+                        inputs_embeds = hidden_states,
+                        use_cache = use_cache,
+                        output_hidden_states=True
+                    )
+                    outputs_embeds.append(outputs.hidden_states[-1])
+                    
+            
+            return outputs_embeds, past_key_values
+        else:
+            hidden_state_vl, hidden_state_exp, kv_holder =self.cross_forward(
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                inputs_embeds=inputs_embeds,
+                use_cache=use_cache,
+                fill_kv_cache=fill_kv_cache
+            )
+            return [hidden_state_vl, hidden_state_exp], kv_holder
+    
+    def cross_forward(
+        self,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
+        inputs_embeds: List[torch.FloatTensor] = None,
+        use_cache: Optional[bool] = None,
+        fill_kv_cache: Optional[bool] = None):
+        use_cache = use_cache if use_cache is not None else False
+        output_attentions, output_hidden_states, use_cache, return_dict, position_ids_vl, cache_position_vl, causal_mask_vl, position_embeddings_vl, cache_position_exp, position_ids_exp, causal_mask_exp, position_embeddings_exp = self.custom_set_inputs(
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds
+        )
+        
         models = [self.qwen25vl.model, self.qwen_expert.model]
         
-        outputs_embeds = []
-
-        for i, hidden_states in enumerate(inputs_embeds):
-            # TODO this is very inefficient
-            # dtype is always the same, batch size too (if > 1 len)
-            # device could be trickier in multi gpu edge cases but that's it
-            if hidden_states is None:
-                continue
-            
-            if i == 0:
-                outputs = models[i].forward(
-                    input_ids = None,
-                    position_ids = position_ids,
-                    attention_mask = attention_mask,
-                    past_key_values = past_key_values,
-                    inputs_embeds = hidden_states,
-                    use_cache = use_cache,
-                    output_hidden_states=True
-                )
-                outputs_embeds.append(outputs.hidden_states[-1])
-                if use_cache and past_key_values is None:
-                    
-                    outputs.past_key_values.key_cache = self.kv_compress(outputs.past_key_values.key_cache)
-                    outputs.past_key_values.value_cache = self.kv_compress(outputs.past_key_values.value_cache)
-                    past_key_values = outputs.past_key_values
-                    # print(f"past_key_values: {past_key_values.key_cache[0].shape}")
-            elif i == 1:
-                # print(f"attention_mask: {attention_mask.shape}, {attention_mask[:, -1].sum().item()}")
-                # print(f"input tensor :{hidden_states.size()},  {hidden_states.size()[0]}")
-                outputs = self.expert_forward(
-                    input_ids = None,
-                    position_ids = None,
-                    attention_mask = attention_mask,
-                    past_key_values = past_key_values,
-                    inputs_embeds = hidden_states,
-                    use_cache = use_cache,
-                    output_hidden_states=True
-                )
-                outputs_embeds.append(outputs.hidden_states[-1])
+        hidden_states = inputs_embeds
                 
-          
-        return outputs_embeds, past_key_values
+        num_layers = self.num_layers
+        for layer_idx in range(num_layers):
+            if layer_idx % 7 == 0:
+                hidden_states = checkpoint(
+                    self.cross_layer_forward,
+                    models,
+                    layer_idx,
+                    hidden_states,
+                    attention_mask,
+                    causal_mask_vl,
+                    causal_mask_exp,
+                    position_ids_vl,
+                    position_ids_exp,
+                    output_attentions,
+                    cache_position_vl,
+                    cache_position_exp,
+                    position_embeddings_vl,
+                    position_embeddings_exp,
+                    use_reentrant=False,
+                )
+            else:
+                hidden_states = self.cross_layer_forward(models,
+                                                        layer_idx,
+                                                        inputs_embeds=hidden_states,
+                                                        attention_mask=attention_mask,
+                                                        casual_mask_vl=causal_mask_vl,
+                                                        casual_mask_exp=causal_mask_exp,
+                                                        position_ids_vl=position_ids_vl,
+                                                        position_ids_exp=position_ids_exp,
+                                                        output_attentions=output_attentions,
+                                                        cache_position_vl=cache_position_vl,
+                                                        cache_position_exp=cache_position_exp,
+                                                        position_embeddings_vl=position_embeddings_vl,
+                                                        position_embeddings_exp=position_embeddings_exp
+                                                        )
+        hidden_state_vl, hidden_state_exp = hidden_states
+        hidden_state_exp = self.qwen_expert.model.norm(hidden_state_exp)
+        
+        return hidden_state_vl, hidden_state_exp, None
+    
+    def custom_set_inputs(
+        self, 
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Union[List[torch.FloatTensor], Cache]] = None,
+        inputs_embeds: Optional[List[torch.FloatTensor]] = None,
+        ):
+        output_attentions = self.qwen25vl.config.output_attentions
+        output_hidden_states = (True)
+        use_cache = False
+        return_dict = True
+        inputs_embeds_vl = inputs_embeds[0]
+        if (inputs_embeds_vl is None):
+            raise ValueError("You must specify inputs_embeds of QwenVL model")
+        past_seen_tokens = 0
+        cache_position_vl = torch.arange(
+            past_seen_tokens, past_seen_tokens + inputs_embeds_vl.shape[1], device=inputs_embeds_vl.device
+            )
+        if position_ids is None:
+            position_ids = cache_position_vl.view(1, 1, -1).expand(3, inputs_embeds_vl.shape[0], -1)
+        elif position_ids.dim() == 2:
+            position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
+
+        causal_mask_vl = self.qwen25vl.model._update_causal_mask(
+            attention_mask, inputs_embeds_vl, cache_position_vl, past_key_values, output_attentions
+        )
+        
+        # create position embeddings to be shared across the decoder layers
+        position_embeddings_vl = self.qwen25vl.model.rotary_emb(inputs_embeds_vl, position_ids)
+        
+        sample_key_values = DynamicCache()
+        seq_len = inputs_embeds_vl.shape[1]
+        bsize = inputs_embeds_vl.shape[0]
+        hidden_dim = inputs_embeds_vl.shape[2]
+        head_dim = hidden_dim // self.qwen25vl.config.num_attention_heads
+        num_kv_heads = self.qwen_expert.config.num_key_value_heads
+        sample_key = torch.randn([bsize, num_kv_heads, seq_len, head_dim], device=inputs_embeds_vl.device)
+        sample_value = torch.randn([bsize, num_kv_heads, seq_len, head_dim], device=inputs_embeds_vl.device)
+        sample_key, sample_value = sample_key_values.update(sample_key, sample_value, 0)
+        
+        inputs_embeds_exp = inputs_embeds[1]
+        past_seen_tokens = sample_key_values.get_seq_length()
+        cache_position_exp = torch.arange(
+                past_seen_tokens, past_seen_tokens + inputs_embeds_exp.shape[1], device=inputs_embeds_exp.device
+            )
+        position_ids_exp = cache_position_exp.unsqueeze(0)
+        causal_mask_exp = self.qwen_expert.model._update_causal_mask(
+                attention_mask, inputs_embeds_exp, cache_position_exp, sample_key_values, output_attentions
+        )
+        position_embeddings_exp = self.qwen_expert.model.rotary_emb(inputs_embeds_exp, position_ids_exp)
+        
+        
+        return output_attentions, output_hidden_states, use_cache, return_dict, position_ids, cache_position_vl, causal_mask_vl, position_embeddings_vl, cache_position_exp, position_ids_exp, causal_mask_exp, position_embeddings_exp
+    
+    def cross_layer_forward(
+        self, 
+        models, 
+        layer_idx, 
+        inputs_embeds, 
+        attention_mask,
+        casual_mask_vl, 
+        casual_mask_exp, 
+        position_ids_vl,
+        position_ids_exp, 
+        output_attentions, 
+        cache_position_vl,
+        cache_position_exp, 
+        position_embeddings_vl,
+        position_embeddings_exp,
+        ):
+        
+        layers = [model.layers[layer_idx] for model in models]
+        
+        if inputs_embeds[0] is not None:
+            hidden_states_vl = inputs_embeds[0]
+            residual_vl = hidden_states_vl
+            
+            hidden_states_vl = layers[0].input_layernorm(hidden_states_vl)
+            
+            hidden_states_vl, self_attn_weights, present_key_value = self.qwen_vl_flow_attn(
+                attn=layers[0].self_attn,
+                hidden_states=hidden_states_vl,
+                position_ids=position_ids_vl,
+                past_key_value=None,
+                attention_mask=casual_mask_vl,
+                output_attentions=output_attentions,
+                use_cache=False,
+                cache_position=cache_position_vl,
+                position_embeddings=position_embeddings_vl
+            )
+            
+            if isinstance(present_key_value, list):
+                present_key_value = self.kv_compress(present_key_value)
+            else:
+                present_key_value.key_cache = self.kv_compress(present_key_value.key_cache)
+                present_key_value.value_cache = self.kv_compress(present_key_value.value_cache)
+            
+            if inputs_embeds[1] is not None:
+                expert_hidden_states = inputs_embeds[1]
+                
+                expert_outputs = self.expert_decoder_forward(
+                    decoder_layer=layers[1],
+                    hidden_states=expert_hidden_states,
+                    attention_mask=casual_mask_exp,
+                    position_ids=position_ids_exp,
+                    past_key_value=present_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=False,
+                    cache_position=cache_position_exp,
+                    position_embeddings=position_embeddings_exp
+                )
+                expert_hidden = expert_outputs[0]
+           
+            hidden_states_vl = residual_vl + hidden_states_vl
+            
+            residual_vl = hidden_states_vl
+            hidden_states_vl = layers[0].post_attention_layernorm(hidden_states_vl)
+            hidden_states_vl = layers[0].mlp(hidden_states_vl)
+            hidden_states_vl = residual_vl + hidden_states_vl
+        
+        outputs = [hidden_states_vl, expert_hidden]
+        return outputs
 
     def expert_forward(
         self,
@@ -493,9 +760,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if self.gradient_checkpointing and self.training and use_cache:
-            # print(
-            #     "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
-            # )
+            # Use cache not ppssible in gradient checkpointing mode
             use_cache = False
         
         if inputs_embeds is None:
@@ -532,7 +797,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             if self.gradient_checkpointing and self.training:
                 if layer_idx % 14 == 0:
                     layer_outputs = checkpoint(
-                        self.custom_decoder_forward,
+                        self.expert_decoder_forward,
                         decoder_layer,
                         hidden_states,
                         causal_mask,
@@ -545,7 +810,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                         use_reentrant=False,
                     )
                 else:
-                    layer_outputs = self.custom_decoder_forward(
+                    layer_outputs = self.expert_decoder_forward(
                         decoder_layer,
                         hidden_states,
                         causal_mask,
@@ -588,80 +853,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         
         return output if return_dict else output.to_tuple()
         
-    def get_attention_interface(self):
-        if self.config.attention_implementation == "fa2":
-            attention_interface = self.flash_attention_forward
-        elif self.config.attention_implementation == "flex":
-            attention_interface = flex_attention_forward
-        else:
-            attention_interface = self.eager_attention_forward
-        return attention_interface
-
-    def flash_attention_forward(
-        self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
-    ):
-        raise NotImplementedError("FA2 is not implemented (yet)")
-
-    def eager_attention_forward(
-        self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
-    ):
-        # gemma_expert_config
-        num_att_heads = self.config.gemma_expert_config.num_attention_heads
-        num_key_value_heads = self.config.gemma_expert_config.num_key_value_heads
-        num_key_value_groups = num_att_heads // num_key_value_heads
-        # # paligemma_config
-        # num_att_heads = self.config.paligemma_config.text_config.num_attention_heads
-        # num_key_value_heads = self.config.paligemma_config.text_config.num_key_value_heads
-        # num_key_value_groups = num_att_heads // num_key_value_heads
-
-        # query_states: batch_size, sequence_length, num_att_head, head_dim
-        # key_states: batch_size, sequence_length, num_key_value_head, head_dim
-        # value_states: batch_size, sequence_length, num_key_value_head, head_dim
-        sequence_length = key_states.shape[1]
-
-        key_states = key_states[:, :, :, None, :].expand(
-            batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
-        )
-        key_states = key_states.reshape(
-            batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
-        )
-
-        value_states = value_states[:, :, :, None, :].expand(
-            batch_size, sequence_length, num_key_value_heads, num_key_value_groups, head_dim
-        )
-        value_states = value_states.reshape(
-            batch_size, sequence_length, num_key_value_heads * num_key_value_groups, head_dim
-        )
-
-        # Attention here is upcasted to float32 to match the original eager implementation.
-
-        query_states = query_states.to(dtype=torch.float32)
-        key_states = key_states.to(dtype=torch.float32)
-
-        query_states = query_states.transpose(1, 2)
-        key_states = key_states.transpose(1, 2)
-
-        att_weights = torch.matmul(query_states, key_states.transpose(2, 3))
-        att_weights *= head_dim**-0.5
-        big_neg = -2.3819763e38  # See gemma/modules.py
-
-        masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
-
-        probs = nn.functional.softmax(masked_att_weights, dim=-1)
-        probs = probs.to(dtype=value_states.dtype)
-
-        # probs: batch_size, num_key_value_head, num_att_head, sequence_length, sequence_length
-        # value_states: batch_size, sequence_length, num_att_heads, head_dim
-
-        att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
-
-        att_output = att_output.permute(0, 2, 1, 3)
-        # we use -1 because sequence length can change
-        att_output = att_output.reshape(batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim)
-
-        return att_output
     
-    def custom_decoder_forward(
+    def expert_decoder_forward(
         self,
         decoder_layer,
         hidden_states: torch.Tensor,
@@ -678,7 +871,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         
         hidden_states = decoder_layer.input_layernorm(hidden_states)
         
-        hidden_states, self_attn_weights = self.custom_attention_forward(
+        hidden_states, self_attn_weights = self.expert_attention_forward(
             decoder_layer.self_attn,
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -704,7 +897,77 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
 
         return outputs
     
-    def custom_attention_forward(
+    def qwen_vl_flow_attn(
+        self,
+        attn,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        ):
+        bsz, q_len, _ = hidden_states.size()
+        
+        query_states = attn.q_proj(hidden_states)
+        key_states = attn.k_proj(hidden_states)
+        value_states = attn.v_proj(hidden_states)
+        
+        query_states = query_states.view(bsz, q_len, -1, attn.head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, q_len, -1, attn.head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, -1, attn.head_dim).transpose(1, 2)
+
+        # Because the input can be padded, the absolute sequence length depends on the max position id.
+        cos, sin = position_embeddings
+        query_states, key_states = apply_multimodal_rotary_pos_emb(
+            query_states, key_states, cos, sin, attn.rope_scaling["mrope_section"]
+        )
+
+        if past_key_value is not None:
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
+            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+        else:
+            past_key_value = [key_states, value_states]
+
+        # repeat k/v heads if n_kv_heads < n_heads
+        key_states = repeat_kv(key_states, attn.num_key_value_groups)
+        value_states = repeat_kv(value_states, attn.num_key_value_groups)
+        # dropout_rate = 0.0 if not attn.training else attn.attention_dropout
+
+        causal_mask = attention_mask
+        if attention_mask is not None:  # no matter the length, we just slice it
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+        
+        # SDPA with memory-efficient backend is currently (torch==2.1.2) bugged with non-contiguous inputs with custom attn_mask,
+        # Reference: https://github.com/pytorch/pytorch/issues/112577.
+        if query_states.device.type == "cuda" and attention_mask is not None:
+            query_states = query_states.contiguous()
+            key_states = key_states.contiguous()
+            value_states = value_states.contiguous()
+        
+        # We dispatch to SDPA's Flash Attention or Efficient kernels via this `is_causal` if statement instead of an inline conditional assignment
+        # in SDPA to support both torch.compile's dynamic shapes and full graph options. An inline conditional prevents dynamic shapes from compiling.
+        # The q_len > 1 is necessary to match with AttentionMaskConverter.to_causal_4d that does not create a causal mask in case q_len == 1.
+        is_causal = True if causal_mask is None and q_len > 1 else False
+        
+        attn_output = torch.nn.functional.scaled_dot_product_attention(
+            query_states,
+            key_states,
+            value_states,
+            attn_mask=causal_mask,
+            dropout_p=attn.attention_dropout if attn.training else 0.0,
+            is_causal=is_causal)
+        
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.view(bsz, q_len, attn.hidden_size)
+        
+        attn_output = attn.o_proj(attn_output)
+        
+        return attn_output, None, past_key_value
+    
+    def expert_attention_forward(
         self,
         attn_layer,
         hidden_states: torch.Tensor,
@@ -726,7 +989,10 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
         
         if past_key_value is not None:
-            key_cache, value_cache = past_key_value[attn_layer.layer_idx]
+            if isinstance(past_key_value, list):
+                key_cache, value_cache = past_key_value
+            else:
+                key_cache, value_cache = past_key_value[attn_layer.layer_idx]
             if key_cache is not None:
                 key_states = torch.cat([key_cache, key_states], dim=-2)
             if value_cache is not None:

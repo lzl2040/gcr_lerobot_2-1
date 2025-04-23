@@ -16,5 +16,6 @@
         "reduce_bucket_size": 5e8,
         "allgather_bucket_size": 1e9,
         "round_robin_gradients": false
-    }
+    },
+    "comms_timeout": 1800
 }
