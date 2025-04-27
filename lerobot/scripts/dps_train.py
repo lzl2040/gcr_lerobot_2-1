@@ -211,7 +211,7 @@ def train(cfg: TrainPipelineConfig):
     dataloader = DataLoader(dataset=dataset,
                             batch_size=batch_size,
                             sampler=sampler,
-                            num_workers=0,
+                            num_workers=2,
                             pin_memory=True,
                             collate_fn=extra_collate_fn,
                             # persistent_workers=True,
@@ -286,8 +286,9 @@ def train(cfg: TrainPipelineConfig):
     completed_steps = step
     fwd_bwd_time = 0
     dataloading_s = 0
+    dist_step=10
     
-    for _ in range(completed_steps, total_steps):
+    for step_idx in range(completed_steps, total_steps):
         
         
         start_time = time.perf_counter()
@@ -385,7 +386,8 @@ def train(cfg: TrainPipelineConfig):
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                     wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
-        dist.barrier()
+        if step_idx % dist_step == 0:
+            dist.barrier()
     # Cleanup
     if int(os.environ.get('RANK', 0)) == 0 and eval_env:
         eval_env.close()
