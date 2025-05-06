@@ -217,7 +217,7 @@ def train(cfg: TrainPipelineConfig):
     dataloader = DataLoader(dataset=dataset,
                             batch_size=batch_size,
                             sampler=sampler,
-                            num_workers=2,
+                            num_workers=4,
                             pin_memory=True,
                             collate_fn=extra_collate_fn,
                             # persistent_workers=True,
