@@ -107,8 +107,14 @@ def update_policy(
     loss, output_dict = model_engine(batch)
 
     model_engine.backward(loss)
+    
+    # for name, param in model_engine.module.model.paligemma_with_expert.qwen25vl.model.layers[-1].named_parameters():
+    #     if param.grad is not None:
+    #         print(f"{name} gradient norm: {param.grad.norm().item()}")
+    
     model_engine.step()
-    # torch.cuda.empty_cache()
+    
+   # torch.cuda.empty_cache()
     return loss, output_dict
 
 
@@ -228,34 +234,34 @@ def train(cfg: TrainPipelineConfig):
     params = list(policy.model.paligemma_with_expert.qwen_expert.parameters()) + list(policy.model.paligemma_with_expert.qwen25vl.model.parameters())
     # params = list(policy.model.paligemma_with_expert.qwen_expert.parameters())
     params = list(filter(lambda p: p.requires_grad, params))
-    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
-        model=policy,
-        config=cfg.deepspeed,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler
-    )
-    logger.info(f"Training batch size:{model_engine.train_batch_size()}") # micro_size * gradient_cum_size * gpu_num
     
     # Resume training state
     step = 0
     if cfg.resume:
         logger.info(f"Resuming training from {cfg.output_dir}")
         ckpt_path = cfg.output_dir
-        # ckpt_list = os.listdir(ckpt_path)
-        # latest_ckpt = sorted(ckpt_list, key=lambda x: int(x.split("step")[-1]))[-1]
-        # checkpoint_path = os.path.join(ckpt_path, latest_ckpt)
-        load_path, client_state = model_engine.load_checkpoint(
-            ckpt_path,
-            load_optimizer_states=True,
-            load_lr_scheduler_states=True
-        )
-        if load_path is not None:
-            step = client_state['step']
-            logger.info(f"Resumed training from step {step}")
+        ckpt_list = os.listdir(ckpt_path)
+        latest_ckpt = sorted(ckpt_list, key=lambda x: int(x.split("step")[-1]))[-1]
+        checkpoint_path = os.path.join(ckpt_path, latest_ckpt)
+        step = int(latest_ckpt.split("step")[-1])
+        
+        state_dict = torch.load(checkpoint_path, map_location="cpu")
+        policy.load_state_dict(state_dict, strict=True)
+        
+        logger.info(f"Resumed training from step {step}")
     else:
         client_state = {
             'step': step
         }
+    
+    model_engine, optimizer, _, lr_scheduler = deepspeed.initialize(
+        model=policy,
+        config=cfg.deepspeed,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler
+    )
+   
+    logger.info(f"Training batch size:{model_engine.train_batch_size()}") # micro_size * gradient_cum_size * gpu_num
         
     dl_iter = cycle(dataloader)
     
@@ -335,10 +341,13 @@ def train(cfg: TrainPipelineConfig):
             os.makedirs(cfg.output_dir, exist_ok=True)
             
             client_state['step'] = step
-            model_engine.save_checkpoint(
-                save_dir=cfg.output_dir,
-                client_state=client_state
-            )
+            if int(os.environ.get('RANK', 0)) == 0:
+                torch.save(model_engine.module.state_dict(), os.path.join(cfg.output_dir, f"step{step}.pt"))
+            dist.barrier(device_ids=[model_engine.local_rank])
+            # model_engine.save_checkpoint(
+            #     save_dir=cfg.output_dir,
+            #     client_state=client_state
+            # )
             # torch.save(client_state, os.path.join(checkpoint_dir, "metadata.pt"))
             # update_last_checkpoint(checkpoint_dir)
         
@@ -387,7 +396,7 @@ def train(cfg: TrainPipelineConfig):
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                     wandb_logger.log_video(eval_info["video_paths"][0], step, mode="eval")
         if step_idx % dist_step == 0:
-            dist.barrier()
+            dist.barrier(device_ids=[model_engine.local_rank])
     # Cleanup
     if int(os.environ.get('RANK', 0)) == 0 and eval_env:
         eval_env.close()

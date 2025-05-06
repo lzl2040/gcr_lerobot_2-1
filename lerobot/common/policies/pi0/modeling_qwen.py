@@ -653,6 +653,7 @@ class   QwenFlowMatching(nn.Module):
             freeze_vision_encoder=self.config.freeze_vision_encoder,
             train_expert_only=self.config.train_expert_only,
             attention_implementation=self.config.attention_implementation,
+            train_main_layers=self.config.train_main_layers,
         )
         self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config, init_load = init_load, init_path = init_path)
 

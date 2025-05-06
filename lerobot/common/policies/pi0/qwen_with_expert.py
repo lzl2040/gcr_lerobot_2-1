@@ -177,10 +177,12 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
         freeze_vision_encoder: bool = True,
         train_expert_only: bool = True,
         attention_implementation: str = "eager",
+        train_main_layers: int = 0,
         qwen25vl_config: dict | None = None,
         qwenexp_config: dict | None = None,
         **kwargs,
     ):
+        self.train_main_layers = train_main_layers
         self.freeze_vision_encoder = freeze_vision_encoder
         self.train_expert_only = train_expert_only
         self.attention_implementation = attention_implementation
@@ -444,17 +446,30 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         self.qwen25vl = Qwen2_5_VLForConditionalGeneration.from_pretrained(path)
 
     def set_requires_grad(self):
+        if self.config.train_expert_only:
+            print(f"Freezing qwen25vl, setting {self.config.train_main_layers} layers unfrozen")
+            if self.config.train_main_layers == 0:
+                self.qwen25vl.eval()
+                for params in self.qwen25vl.parameters():
+                    params.requires_grad = False
+            else:
+                self.qwen25vl.model.train()
+                for params in self.qwen25vl.parameters():
+                    params.requires_grad = False
+                for layer_idx in range(self.config.train_main_layers):
+                    for params in self.qwen25vl.model.layers[-layer_idx-1].parameters():
+                        params.requires_grad = True
+                        
         if self.config.freeze_vision_encoder:
             print("Freezing vision encoder")
             self.qwen25vl.visual.eval()
             for params in self.qwen25vl.visual.parameters():
                 params.requires_grad = False
-
-        if self.config.train_expert_only:
-            print("Freezing qwen25vl")
-            self.qwen25vl.eval()
-            for params in self.qwen25vl.parameters():
-                params.requires_grad = False
+        else:
+            print("Training vision encoder")
+            self.qwen25vl.visual.train()
+            for params in self.qwen25vl.visual.parameters():
+                params.requires_grad = True
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -574,7 +589,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 
         num_layers = self.num_layers
         for layer_idx in range(num_layers):
-            if layer_idx % 7 == 0:
+            if layer_idx % 14 == 0:
                 hidden_states = checkpoint(
                     self.cross_layer_forward,
                     models,

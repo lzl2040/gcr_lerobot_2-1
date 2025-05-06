@@ -34,6 +34,13 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
             the original scale.
     """
 
+    # Finetuning settings
+    freeze_vision_encoder: bool = False
+    train_main_layers: int = 0
+    train_expert_only: bool = True
+    train_state_proj: bool = True
+    train_from_scratch: bool = True
+    
     n_obs_steps: int = 1
     normalization_mapping: dict[str, NormalizationMode] = field(default_factory=dict)
 
