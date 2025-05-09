@@ -279,7 +279,7 @@ def train(cfg: TrainPipelineConfig):
         num_replicas=world_size,
         rank=rank,
         shuffle=True,
-        seed=cfg.seed
+        seed=cfg.seed+rank,
     )
     
     dataloader = DataLoader(
