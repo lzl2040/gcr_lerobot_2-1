@@ -166,6 +166,7 @@ def train(cfg: TrainPipelineConfig):
     master_ip = os.environ["MASTER_ADDR"]
     master_port = os.environ["MASTER_PORT"]
     master_uri = "tcp://%s:%s" % (master_ip, master_port)
+    print(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
     dist.init_process_group(
         backend="nccl",
         init_method=master_uri,
