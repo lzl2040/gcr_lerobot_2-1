@@ -179,7 +179,7 @@ def train(cfg: TrainPipelineConfig):
     rank = dist.get_rank()
     # local_rank = rank
     # local_rank = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
-    local_rank = node_rank
+    # local_rank = node_rank
     torch.cuda.set_device(local_rank)
     
     # 初始化配置
@@ -207,8 +207,8 @@ def train(cfg: TrainPipelineConfig):
         image_transforms=image_transforms,
         seed=cfg.seed + rank,
         data_mix="oxe_magic_soup_plus",
-        vla2root_json="vla2root.json",
-        # vla2root_json="vla2root_bak_single.json"
+        # vla2root_json="vla2root.json",
+        vla2root_json="vla2root_bak_single.json"
     )
     
     # Policy setup
