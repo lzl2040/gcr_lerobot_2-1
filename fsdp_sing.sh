@@ -19,6 +19,18 @@ while [[ $# -gt 0 ]]; do
             NPROC_PER_NODE="$2"
             shift 2
             ;;
+        --node_rank)
+            NODE_RANK="$2"
+            shift 2
+            ;;
+        --master_addr)
+            MASTER_ADDR="$2"
+            shift 2
+            ;;
+        --master_port)
+            MASTER_PORT="$2"
+            shift 2
+            ;;
         --job_name)
             JOB_NAME="$2"
             shift 2
