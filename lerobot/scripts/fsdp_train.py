@@ -207,8 +207,8 @@ def train(cfg: TrainPipelineConfig):
         image_transforms=image_transforms,
         seed=cfg.seed + rank,
         data_mix="oxe_magic_soup_plus",
-        # vla2root_json="vla2root.json",
-        vla2root_json="vla2root_bak_single.json"
+        vla2root_json="vla2root.json",
+        # vla2root_json="vla2root_bak_single.json"
     )
     
     # Policy setup
