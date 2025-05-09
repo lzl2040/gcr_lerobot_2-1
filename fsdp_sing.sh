@@ -67,6 +67,9 @@ FIXED_OUTPUT_DIR="/mnt/wangxiaofa/original_qw"
 torchrun \
     --nnodes=$NNODES \
     --nproc_per_node=$NPROC_PER_NODE \
+    --node_rank=$NODE_RANK \
+    --master_addr=$MASTER_ADDR \
+    --master_port=$MASTER_PORT \
     lerobot/scripts/fsdp_train.py \
     --policy.type="qwen" \
     --output_dir="$FIXED_OUTPUT_DIR" \
