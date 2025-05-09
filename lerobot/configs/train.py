@@ -48,7 +48,7 @@ class TrainPipelineConfig(HubMixin):
     # Number of workers for the dataloader.
     local_rank: int = 0
     num_workers: int = 8
-    batch_size: int = 1
+    batch_size: int = 2
     steps: int = 2000_000
     eval_freq: int = 2000
     log_freq: int = 50
@@ -107,6 +107,12 @@ class TrainPipelineConfig(HubMixin):
                 self.job_name = f"{self.policy.type}"
             else:
                 self.job_name = f"{self.env.type}_{self.policy.type}"
+                
+        if self.output_dir is not None:
+            if self.job_name is not None:
+                self.output_dir = self.output_dir / self.job_name
+            else:
+                self.output_dir = self.output_dir / f"{self.policy.type}"
 
         if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             pass

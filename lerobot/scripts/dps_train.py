@@ -147,8 +147,8 @@ def train(cfg: TrainPipelineConfig):
     dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
                            seed=cfg.seed + int(os.environ.get("RANK", 0)), 
                            data_mix="oxe_magic_soup_plus",
-                        #    vla2root_json="vla2root_bak_single.json",
-                           vla2root_json="vla2root.json"
+                           vla2root_json="vla2root_bak_single.json",
+                        #    vla2root_json="vla2root.json"
                            )
     # dataset = MultiDatasetforDistTraining(cfg=cfg, image_transforms=image_transforms, 
     #                        seed=cfg.seed + int(os.environ.get("RANK", 0)), data_mix="oxe_magic_soup_plus",
@@ -260,6 +260,10 @@ def train(cfg: TrainPipelineConfig):
         optimizer=optimizer,
         lr_scheduler=lr_scheduler
     )
+    
+    if int(os.environ.get('RANK', 0)) == 0:
+        logger.info(model_engine)
+        logger.info(model_engine.module)
    
     logger.info(f"Training batch size:{model_engine.train_batch_size()}") # micro_size * gradient_cum_size * gpu_num
         

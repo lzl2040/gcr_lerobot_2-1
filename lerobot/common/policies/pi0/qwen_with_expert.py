@@ -459,6 +459,11 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 for layer_idx in range(self.config.train_main_layers):
                     for params in self.qwen25vl.model.layers[-layer_idx-1].parameters():
                         params.requires_grad = True
+        else:
+            print("Training qwen25vl")
+            self.qwen25vl.train()
+            for params in self.qwen25vl.parameters():
+                params.requires_grad = True
                         
         if self.config.freeze_vision_encoder:
             print("Freezing vision encoder")
@@ -475,10 +480,10 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         super().train(mode)
 
         if self.config.freeze_vision_encoder:
-            self.paligemma.vision_tower.eval()
+            self.qwen25vl.visual.eval()
 
-        if self.config.train_expert_only:
-            self.paligemma.eval()
+        # if self.config.train_expert_only:
+        #     self.paligemma.eval()
 
     def to_bfloat16_like_physical_intelligence(self):
         self.qwen25vl = self.qwen25vl.to(dtype=torch.bfloat16)
@@ -530,7 +535,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                         attention_mask = attention_mask,
                         past_key_values = past_key_values,
                         inputs_embeds = hidden_states,
-                        use_cache = use_cache,
+                        use_cache = True,
                         output_hidden_states=True
                     )
                     outputs_embeds.append(outputs.hidden_states[-1])
@@ -589,7 +594,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 
         num_layers = self.num_layers
         for layer_idx in range(num_layers):
-            if layer_idx % 14 == 0:
+            if layer_idx % 7 == 0:
                 hidden_states = checkpoint(
                     self.cross_layer_forward,
                     models,
@@ -704,6 +709,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             hidden_states_vl = inputs_embeds[0]
             residual_vl = hidden_states_vl
             
+            # print(f"RMSNorm param at layer {layer_idx} is: {layers[0].input_layernorm.weight.size()}")
             hidden_states_vl = layers[0].input_layernorm(hidden_states_vl)
             
             hidden_states_vl, self_attn_weights, present_key_value = self.qwen_vl_flow_attn(
@@ -926,6 +932,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         ):
         bsz, q_len, _ = hidden_states.size()
         
+        # print(f"hidden shape: {hidden_states.size()}")
+        # print(f"attn info: {attn.q_proj.weight.size()}, {attn.q_proj.bias.size()}")
         query_states = attn.q_proj(hidden_states)
         key_states = attn.k_proj(hidden_states)
         value_states = attn.v_proj(hidden_states)
