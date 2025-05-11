@@ -244,7 +244,7 @@ def train(cfg: TrainPipelineConfig):
             logger.info("No checkpoint found, starting from scratch.")
             
     # 设置模型全部参数为BF16
-    logger.info("Setting model parameters to FP16...")
+    logger.info("Setting model parameters to BF16...")
     for params in policy.parameters():
         params.data = params.data.bfloat16()
         # params.data = params.data.to(dtype=torch.float16)
