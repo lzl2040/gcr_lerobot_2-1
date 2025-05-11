@@ -16,6 +16,7 @@
 import logging
 import time
 import os
+import glob
 import json
 import functools
 from pathlib import Path
@@ -159,25 +160,25 @@ def train_step(model, batch, scaler, optimizer):
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     # 初始化分布式环境
-    # world_size = int(os.environ["WORLD_SIZE"])
-    # local_rank = int(os.environ["LOCAL_RANK"])
-    # world_rank = int(os.environ["RANK"])
-    # node_rank = int(os.environ["NODE_RANK"])
-    # master_ip = os.environ["MASTER_ADDR"]
-    # master_port = os.environ["MASTER_PORT"]
-    # master_uri = "tcp://%s:%s" % (master_ip, master_port)
-    # print(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
-    # dist.init_process_group(
-    #     backend="nccl",
-    #     init_method=master_uri,
-    #     world_size=world_size,
-    #     timeout=timedelta(minutes=60),
-    #     rank=world_rank,
-    # )
-    dist.init_process_group(backend="nccl")
-    world_size = dist.get_world_size()
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ["LOCAL_RANK"])
+    world_rank = int(os.environ["RANK"])
+    node_rank = int(os.environ["NODE_RANK"])
+    master_ip = os.environ["MASTER_ADDR"]
+    master_port = os.environ["MASTER_PORT"]
+    master_uri = "tcp://%s:%s" % (master_ip, master_port)
+    print(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
+    dist.init_process_group(
+        backend="nccl",
+        init_method=master_uri,
+        world_size=world_size,
+        timeout=timedelta(minutes=60),
+        rank=world_rank,
+    )
+    # dist.init_process_group(backend="nccl")
+    # world_size = dist.get_world_size()
     rank = dist.get_rank()
-    local_rank = rank
+    # local_rank = rank
     # local_rank = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
     # local_rank = node_rank
     torch.cuda.set_device(local_rank)
@@ -225,6 +226,23 @@ def train(cfg: TrainPipelineConfig):
         ds_meta=dataset.meta
     )
     
+    # 训练状态初始化
+    step = 1 
+    if cfg.resume:
+        logger.info("Loading model from checkpoint...")
+        os.makedirs(cfg.output_dir, exist_ok=True)
+        pts = sorted(glob.glob(os.path.join(cfg.output_dir, "*.pt")))
+        if pts:
+            steps = [int(os.path.basename(pt).split(".")[0].split("step")[1] for pt in pts)]
+            step = sorted(steps)[-1] + 1
+            cfg.resume = os.path.join(cfg.output_dir, f"step{step-1}.pt")
+            logger.info(f"Resuming from checkpoint {cfg.resume} at step {step}")
+            model_state_dict = torch.load(cfg.resume, map_location="cpu")
+            policy.load_state_dict(model_state_dict, strict=True)
+        else:
+            cfg.resume = None
+            logger.info("No checkpoint found, starting from scratch.")
+            
     # 设置模型全部参数为BF16
     logger.info("Setting model parameters to FP16...")
     for params in policy.parameters():
@@ -286,17 +304,15 @@ def train(cfg: TrainPipelineConfig):
         dataset,
         batch_size=cfg.batch_size,
         sampler=sampler,
-        num_workers=3,
+        num_workers=2,
         collate_fn=extra_collate_fn,
-        pin_memory=True,
+        pin_memory=False,
     )
     
     # 混合精度scaler
-    scaler = ShardedGradScaler()
+    # scaler = ShardedGradScaler()
     scaler = None
     
-    # 训练状态初始化
-    step = 1 
     # Metrics setup
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
