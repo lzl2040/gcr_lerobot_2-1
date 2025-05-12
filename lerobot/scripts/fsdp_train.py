@@ -202,11 +202,24 @@ def train(cfg: TrainPipelineConfig):
         set_seed(cfg.seed)
     
     # 数据集初始化
+    
+    step = 1
+    seed = cfg.seed + rank
+    if cfg.resume:
+        logger.info("Resume is set, will model from checkpoint...")
+        os.makedirs(cfg.output_dir, exist_ok=True)
+        pts = sorted(glob.glob(os.path.join(cfg.output_dir, "*.pt")))
+        logger.info(f"Found {len(pts)} checkpoints, names are {pts}")
+        if pts:
+            steps = [int(os.path.basename(pt).split(".")[0].split("step")[1]) for pt in pts]
+            step = sorted(steps)[-1] + 1
+            seed += (step-1)
+            
     image_transforms = (ImageTransforms(cfg.dataset.image_transforms))
     dataset = MultiDatasetforDistTraining(
         cfg=cfg, 
         image_transforms=image_transforms,
-        seed=cfg.seed + rank,
+        seed=seed,
         data_mix="oxe_magic_soup_plus",
         vla2root_json="vla2root.json",
         # vla2root_json="vla2root_bak_single.json"
@@ -227,15 +240,8 @@ def train(cfg: TrainPipelineConfig):
     )
     
     # 训练状态初始化
-    step = 1 
     if cfg.resume:
-        logger.info("Loading model from checkpoint...")
-        os.makedirs(cfg.output_dir, exist_ok=True)
-        pts = sorted(glob.glob(os.path.join(cfg.output_dir, "*.pt")))
-        logger.info(f"Found {len(pts)} checkpoints, names are {pts}")
         if pts:
-            steps = [int(os.path.basename(pt).split(".")[0].split("step")[1]) for pt in pts]
-            step = sorted(steps)[-1] + 1
             cfg.resume = os.path.join(cfg.output_dir, f"step{step-1}.pt")
             logger.info(f"Resuming from checkpoint {cfg.resume} at step {step}")
             model_state_dict = torch.load(cfg.resume, map_location="cpu")
