@@ -809,7 +809,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 frames = decode_video_frames_torchvision(
                     video_path, query_ts, self.tolerance_s, self.video_backend, return_all=True, return_type="image"
                 )
-                frames = [frame.resize((112, 112)) for frame in frames]
+                # frames = [frame.resize((112, 112)) for frame in frames]
                 # item[vid_key] = frames
             else:
                 frames = decode_video_frames_torchvision(
@@ -1666,6 +1666,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 else:
                     vision['video'] = video
                 
+                vision["image"].append(vision["video"][-1])
                 # Resize frames in the video
                 for i in range(len(vision['video'])):
                     vision["video"][i] = vision["video"][i].resize((112, 112))
