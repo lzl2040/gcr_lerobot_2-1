@@ -167,7 +167,6 @@ def train(cfg: TrainPipelineConfig):
     master_ip = os.environ["MASTER_ADDR"]
     master_port = os.environ["MASTER_PORT"]
     master_uri = "tcp://%s:%s" % (master_ip, master_port)
-    print(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
     dist.init_process_group(
         backend="nccl",
         init_method=master_uri,
@@ -186,6 +185,7 @@ def train(cfg: TrainPipelineConfig):
     # 初始化配置
     cfg.validate()
     logger = init_logger(cfg, rank)
+    logger.info(f"DIST INFO: world_size={world_size}, local_rank={local_rank}, world_rank={world_rank}, node_rank={node_rank}, master_uri={master_uri}")
     
     if int(os.environ.get('RANK', 0)) == 0:
         logger.info(pformat(cfg.to_dict()))
@@ -232,8 +232,9 @@ def train(cfg: TrainPipelineConfig):
         logger.info("Loading model from checkpoint...")
         os.makedirs(cfg.output_dir, exist_ok=True)
         pts = sorted(glob.glob(os.path.join(cfg.output_dir, "*.pt")))
+        logger.info(f"Found {len(pts)} checkpoints, names are {pts}")
         if pts:
-            steps = [int(os.path.basename(pt).split(".")[0].split("step")[1] for pt in pts)]
+            steps = [int(os.path.basename(pt).split(".")[0].split("step")[1]) for pt in pts]
             step = sorted(steps)[-1] + 1
             cfg.resume = os.path.join(cfg.output_dir, f"step{step-1}.pt")
             logger.info(f"Resuming from checkpoint {cfg.resume} at step {step}")
@@ -341,6 +342,8 @@ def train(cfg: TrainPipelineConfig):
     fwd_bwd_time = 0
     dataloading_s = 0
     
+    if rank == 0:
+        logger.info("Starting training loop...")
     while step < cfg.steps:
         batch_start = time.perf_counter()
         batch = next(dataloader_iter)

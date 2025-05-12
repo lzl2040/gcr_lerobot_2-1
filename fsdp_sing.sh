@@ -85,4 +85,5 @@ torchrun \
     --wandb.enable=true \
     --wandb.project="pi0first" \
     --job_name="$JOB_NAME" \
-    --log_dir="/mnt/wangxiaofa/logs"
+    --log_dir="/mnt/wangxiaofa/logs" \
+    --resume=true
