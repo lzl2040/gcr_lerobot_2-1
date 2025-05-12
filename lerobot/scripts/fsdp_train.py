@@ -247,7 +247,7 @@ def train(cfg: TrainPipelineConfig):
             model_state_dict = torch.load(cfg.resume, map_location="cpu")
             policy.load_state_dict(model_state_dict, strict=True)
         else:
-            cfg.resume = None
+            cfg.resume = False
             logger.info("No checkpoint found, starting from scratch.")
             
     # 设置模型全部参数为BF16
@@ -348,8 +348,15 @@ def train(cfg: TrainPipelineConfig):
     fwd_bwd_time = 0
     dataloading_s = 0
     
+    if cfg.resume:
+        logger.info("Setting up learning rate scheduler...")
+        for _ in range(step-1):
+            lr_scheduler.step()
+    
     if rank == 0:
         logger.info("Starting training loop...")
+        
+    
     while step < cfg.steps:
         batch_start = time.perf_counter()
         batch = next(dataloader_iter)
