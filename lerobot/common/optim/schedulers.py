@@ -85,6 +85,7 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
     num_decay_steps: int
     peak_lr: float
     decay_lr: float
+    num_platform_steps: int = 20000
 
     def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
         del num_training_steps
@@ -95,6 +96,9 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
                     return 1 / (self.num_warmup_steps + 1)
                 frac = 1 - current_step / self.num_warmup_steps
                 return (1 / (self.num_warmup_steps + 1) - 1) * frac + 1
+            
+            def original_schedule(current_step):
+                return 1
 
             def cosine_decay_schedule(current_step):
                 step = min(current_step, self.num_decay_steps)
@@ -105,6 +109,8 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
 
             if current_step < self.num_warmup_steps:
                 return linear_warmup_schedule(current_step)
+            elif current_step < self.num_platform_steps+self.num_warmup_steps:
+                return original_schedule(current_step)
             else:
                 if self.num_decay_steps == -1:
                     return 1
