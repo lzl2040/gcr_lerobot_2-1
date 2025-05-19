@@ -125,11 +125,13 @@ def save_fsdp_checkpoint(model, optim, output_dir, step):
 
         logging.info(f"Checkpoint saved at {ckpt_path}")
 
-def train_step(model, batch, scaler, optimizer):
+def train_step(model, batch, scaler, cfg):
     """执行单个训练步骤"""
     # 前向传播
     with torch.amp.autocast("cuda", dtype=torch.bfloat16, cache_enabled=False):
         loss, output_dict = model(batch)
+    
+    loss = loss / cfg.gradient_accumulation_steps
     
     # 反向传播
     if scaler is not None:
@@ -141,14 +143,6 @@ def train_step(model, batch, scaler, optimizer):
     # scaler.unscale_(optimizer)
     grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
     # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-    
-    # 参数更新
-    if scaler is not None:
-        scaler.step(optimizer)
-        scaler.update()
-    else:
-        optimizer.step()
-    optimizer.zero_grad()
     
     # 梯度平均，用于记录
     if dist.is_initialized():
@@ -278,7 +272,8 @@ def train(cfg: TrainPipelineConfig):
     
     mixed_precision = MixedPrecision(
         param_dtype=torch.bfloat16,
-        reduce_dtype=torch.float32,
+        # reduce_dtype=torch.float32,
+        reduce_dtype=torch.bfloat16,
         buffer_dtype=torch.bfloat16,
         keep_low_precision_grads=True
     )
@@ -322,9 +317,9 @@ def train(cfg: TrainPipelineConfig):
     
     # Metrics setup
     train_metrics = {
-        "loss": AverageMeter("loss", ":.3f"),
-        "grad_norm": AverageMeter("grdn", ":.3f"),
-        "lr": AverageMeter("lr", ":0.1e"),
+        "loss": AverageMeter("loss", ":.4f"),
+        "grad_norm": AverageMeter("grdn", ":.4f"),
+        "lr": AverageMeter("lr", ":0.01e"),
         "update_s": AverageMeter("updt_s", ":.3f"),
         "dataloading_s": AverageMeter("data_s", ":.3f"),
         "optim_s": AverageMeter("optim_s", ":.3f"),
@@ -345,12 +340,14 @@ def train(cfg: TrainPipelineConfig):
     model.train()
     dataloader_iter = cycle(dataloader)
     
-    fwd_bwd_time = 0
-    dataloading_s = 0
+    fwd_bwd_time = 0.0
+    dataloading_s = 0.0
+    grad_norm_value = 0.0
+    loss_value = 0.0
     
     if cfg.resume:
         logger.info("Setting up learning rate scheduler...")
-        for _ in range(step-1):
+        for _ in range(int((step-1)/cfg.gradient_accumulation_steps)):
             lr_scheduler.step()
     
     if rank == 0:
@@ -364,36 +361,52 @@ def train(cfg: TrainPipelineConfig):
         dataloading_s += data_time
         
         step_start = time.perf_counter()
-        loss, grad_norm, outputs = train_step(model, batch, scaler, optimizer)
+        
+        loss, grad_norm, outputs = train_step(model, batch, scaler, cfg)
+        grad_to_record = grad_norm.item() if grad_norm is not None else 0.0
+        grad_norm_value += grad_to_record
+        loss_value += loss.detach().mean().item()
+            
         step_time = time.perf_counter() - step_start
         fwd_bwd_time += step_time
         
-        # 更新指标
-        train_tracker.dataloading_s = dataloading_s
-        train_tracker.update_s = fwd_bwd_time
+        # 参数更新
+        if step % cfg.gradient_accumulation_steps == 0:
+            optim_start = time.perf_counter()
+            if scaler is not None:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad()
+            optim_time = time.perf_counter() - optim_start
         
-        loss_value = loss.detach().mean().item()
-        grad_norm_value = grad_norm.item() if grad_norm is not None else 0.0
+            # 更新指标
+            train_tracker.optim_s = optim_time
+            train_tracker.dataloading_s = dataloading_s
+            train_tracker.update_s = fwd_bwd_time
+            train_tracker.loss = loss_value
+            train_tracker.grad_norm = grad_norm_value
+            train_tracker.lr = optimizer.param_groups[0]["lr"]
+            train_tracker.step()
+            
+            fwd_bwd_time = 0.0
+            dataloading_s = 0.0
+            loss_value = 0.0
+            grad_norm_value = 0.0
+            
+            # 学习率调度
+            if lr_scheduler is not None:
+                lr_scheduler.step()
         
-        train_tracker.loss = loss_value
-        train_tracker.grad_norm = grad_norm_value
-        train_tracker.lr = optimizer.param_groups[0]["lr"]
-        train_tracker.step()
         
-        fwd_bwd_time = 0
-        dataloading_s = 0
-        
-        
-        # 学习率调度
-        if lr_scheduler is not None:
-            lr_scheduler.step()
         
         # 日志记录
         if step % cfg.log_freq == 0:
             dist.barrier(device_ids=[local_rank])
             if rank == 0:
-                logger.info(train_tracker)
                 
+                logger.info(train_tracker)
                 if wandb_logger:
                     wandb_log_dict = train_tracker.to_dict()
                     if outputs:
@@ -405,7 +418,6 @@ def train(cfg: TrainPipelineConfig):
         if step % cfg.save_freq == 0:
             save_fsdp_checkpoint(model, optimizer, cfg.output_dir, step)
         
-        
         step += 1
     
     # 最终保存
@@ -414,7 +426,7 @@ def train(cfg: TrainPipelineConfig):
         logger.info("Training completed successfully")
 
 if __name__ == "__main__":
-    # # 设置环境变量
+    # 设置环境变量
     # os.environ["TOKENIZERS_PARALLELISM"] = "false"
     # os.environ["OMPI_ALLOW_RUN_AS_ROOT"] = "1"
     # os.environ["OMPI_ALLOW_RUN_AS_ROOT_CONFIRM"] = "1"

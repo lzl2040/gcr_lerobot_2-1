@@ -134,7 +134,7 @@ class MetricsTracker:
 
     def __str__(self) -> str:
         display_list = [
-            f"step:{format_big_number(self.steps)}",
+            f"step:{self.steps}",
             # number of samples seen during training
             f"smpl:{format_big_number(self.samples)}",
             # number of episodes seen during training

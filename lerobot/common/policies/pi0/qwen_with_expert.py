@@ -417,9 +417,10 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             self.qwen25vl = Qwen2_5_VLForConditionalGeneration.from_pretrained(init_path)
         self.qwen_expert = Qwen2ForCausalLM(config=config.qwenexp_config)
         
-        self.kv_compress = KVCompress(in_dim=4, out_dim=2)
-        
         self.num_layers = self.config.qwen25vl_config.num_hidden_layers
+        
+        self.kv_compress = nn.ModuleList([KVCompress(in_dim=4, out_dim=2) for _ in range(self.num_layers)])
+        # self.kv_compress = KVCompress(in_dim=4, out_dim=2)
         
         # Remove unused embed_tokens
         self.qwen_expert.model.embed_tokens = None
@@ -541,8 +542,11 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     outputs_embeds.append(outputs.hidden_states[-1])
                     if use_cache and past_key_values is None:
                         
-                        outputs.past_key_values.key_cache = self.kv_compress(outputs.past_key_values.key_cache)
-                        outputs.past_key_values.value_cache = self.kv_compress(outputs.past_key_values.value_cache)
+                        # kv attn
+                        for layer_idx in range(self.num_layers):
+                            outputs.past_key_values[layer_idx] = self.kv_compress[layer_idx](outputs.past_key_values[layer_idx])
+                        # outputs.past_key_values.key_cache = self.kv_compress(outputs.past_key_values.key_cache)
+                        # outputs.past_key_values.value_cache = self.kv_compress(outputs.past_key_values.value_cache)
                         past_key_values = outputs.past_key_values
                         # print(f"past_key_values: {past_key_values.key_cache[0].shape}")
                 elif i == 1:
@@ -725,10 +729,10 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             )
             
             if isinstance(present_key_value, list):
-                present_key_value = self.kv_compress(present_key_value)
+                present_key_value = self.kv_compress[layer_idx](present_key_value)
             else:
-                present_key_value.key_cache = self.kv_compress(present_key_value.key_cache)
-                present_key_value.value_cache = self.kv_compress(present_key_value.value_cache)
+                present_key_value.key_cache = self.kv_compress[layer_idx](present_key_value.key_cache)
+                present_key_value.value_cache = self.kv_compress[layer_idx](present_key_value.value_cache)
             
             if inputs_embeds[1] is not None:
                 expert_hidden_states = inputs_embeds[1]
