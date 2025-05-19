@@ -420,7 +420,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         self.num_layers = self.config.qwen25vl_config.num_hidden_layers
         
         self.kv_compress = nn.ModuleList([KVCompress(in_dim=4, out_dim=2) for _ in range(self.num_layers)])
-        self.kv_compress = KVCompress(in_dim=4, out_dim=2)
+        # self.kv_compress = KVCompress(in_dim=4, out_dim=2)
         
         # Remove unused embed_tokens
         self.qwen_expert.model.embed_tokens = None
