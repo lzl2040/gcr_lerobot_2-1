@@ -544,7 +544,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                         
                         # kv attn
                         for layer_idx in range(self.num_layers):
-                            outputs.past_key_values[layer_idx] = self.kv_compress(outputs.past_key_values[layer_idx])
+                            outputs.past_key_values[layer_idx] = self.kv_compress[layer_idx](outputs.past_key_values[layer_idx])
                         # outputs.past_key_values.key_cache = self.kv_compress(outputs.past_key_values.key_cache)
                         # outputs.past_key_values.value_cache = self.kv_compress(outputs.past_key_values.value_cache)
                         past_key_values = outputs.past_key_values
