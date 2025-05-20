@@ -226,6 +226,21 @@ OXE_NAMED_MIXTURES: Dict[str, List[Tuple[str, float]]] = {
      "env_in_simpler":[
          ("fractal20220817_data", 1.0), 
          ("bridge_orig", 1.0), 
-     ]
+     ],
+     "libero": [
+         ("libero_goal_no_noops", 1.0), 
+         ("libero_object_no_noops", 1.0), 
+         ("libero_spatial_no_noops", 1.0), 
+         ("libero_10_no_noops", 1.0),
+     ],
+     "simpler_fractal":[
+         ("simpler_fractal", 1.0), 
+     ],
+     "simpler_bridge":[
+         ("simpler_bridge", 1.0), 
+     ],
+     "calvin_abc_d":[
+         ("calvin_abc_d", 1.0), 
+     ],
 }
 # fmt: on

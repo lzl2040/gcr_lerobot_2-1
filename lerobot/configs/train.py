@@ -49,6 +49,7 @@ class TrainPipelineConfig(HubMixin):
     local_rank: int = 0
     num_workers: int = 8
     batch_size: int = 2
+    data_mix: str = "oxe_magic_soup_plus"
     steps: int = 2000_000
     eval_freq: int = 2000
     log_freq: int = 100

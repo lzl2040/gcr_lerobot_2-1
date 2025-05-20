@@ -4,6 +4,7 @@
 NNODES=1
 NPROC_PER_NODE=2
 JOB_NAME=""
+DATA_MIX="bridge"
 OPTIMIZER_LR=2.5e-5
 OPTIMIZER_DECAY_LR=2.5e-6
 SCHEDULER_WARMUP_STEPS=2000
@@ -84,6 +85,8 @@ torchrun \
     --policy.type="qwen" \
     --output_dir="$FIXED_OUTPUT_DIR" \
     --dataset.repo_id="whatever" \
+    --batch_size=4 \
+    --data_mix=$DATA_MIX \
     --dataset.processor="/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/" \
     --dataset.parent_dir="/mnt/wangxiaofa/robot_dataset/lerobot-format/" \
     --policy.scheduler_warmup_steps=$SCHEDULER_WARMUP_STEPS \

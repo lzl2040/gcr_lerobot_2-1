@@ -214,7 +214,7 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg, 
         image_transforms=image_transforms,
         seed=seed,
-        data_mix="oxe_magic_soup_plus",
+        data_mix=cfg.data_mix,
         vla2root_json="vla2root.json",
         # vla2root_json="vla2root_bak_single.json"
     )
