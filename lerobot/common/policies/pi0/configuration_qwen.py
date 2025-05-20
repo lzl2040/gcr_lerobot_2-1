@@ -57,7 +57,7 @@ class QwenConfig(PreTrainedConfig):
     proj_width: int = 1536
 
     # Decoding
-    num_steps: int = 100
+    num_steps: int = 10
 
     # Attention utils
     use_cache: bool = True
