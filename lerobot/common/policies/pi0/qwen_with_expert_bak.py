@@ -168,7 +168,7 @@ def eager_attention_forward(
 
 class PaliGemmaWithExpertConfig(PretrainedConfig):
     model_type = "PaliGemmaWithExpertModel"
-    sub_configs = {"qwen25vl_config": AutoConfig, "qwenexp_config": AutoConfig, "awa_model_config": AutoConfig}
+    sub_configs = {"qwen25vl_config": AutoConfig, "qwenexp_config": AutoConfig}
 
     def __init__(
         self,
@@ -179,7 +179,6 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
         attention_implementation: str = "eager",
         train_main_layers: int = 0,
         qwen25vl_config: dict | None = None,
-        awa_model_config: dict | None = None,
         qwenexp_config: dict | None = None,
         **kwargs,
     ):
@@ -262,15 +261,15 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 vocab_size=151936,
                 bos_token_id=151643,
                 eos_token_id=151643,
-                hidden_size=1280,
+                hidden_size=1536,
                 attention_dropout=0.0,
                 hidden_act="silu",
-                intermediate_size=7168,
+                intermediate_size=8960,
                 initializer_range=0.02,
                 max_position_embeddings=131072,
                 model_type="qwen2",
                 max_window_layers=28,
-                num_attention_heads=10,
+                num_attention_heads=12,
                 num_hidden_layers=28,
                 num_key_value_heads=2,
                 rms_norm_eps=1e-06,
@@ -290,42 +289,6 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
 
             cfg_cls = CONFIG_MAPPING[qwenexp_config["model_type"]]
             self.qwenexp_config = cfg_cls(**qwenexp_config)
-        
-        if awa_model_config is None:
-            # Default config for awa model
-            self.awa_model_config = CONFIG_MAPPING["qwen2"](
-                transformers_version = "4.40.1",
-                vocab_size=151936,
-                bos_token_id=151643,
-                eos_token_id=151643,
-                hidden_size=1024,
-                attention_dropout=0.0,
-                hidden_act="silu",
-                intermediate_size=5376,
-                initializer_range=0.02,
-                max_position_embeddings=131072,
-                model_type="qwen2",
-                max_window_layers=28,
-                num_attention_heads=8,
-                num_hidden_layers=28,
-                num_key_value_heads=2,
-                rms_norm_eps=1e-06,
-                rope_theta=1000000.0,
-                sliding_window=131072,
-                tie_word_embeddings=True,
-                torch_dtype="bfloat16",
-                use_cache=True,
-                use_mrope=False,
-                use_sliding_window=False,
-                attn_implementation = "flash_attention_2",
-            )
-        elif isinstance(self.awa_model_config, dict):
-            # Override expert default config for Vanilla Qwen2
-            if "model_type" not in awa_model_config:
-                awa_model_config["model_type"] = "qwen2"
-
-            cfg_cls = CONFIG_MAPPING[awa_model_config["model_type"]]
-            self.awa_model_config = cfg_cls(**qwenexp_config)
 
         super().__init__(**kwargs)
 
@@ -408,9 +371,8 @@ class Qwen2RMSNorm(nn.Module):
 class KVCompress(nn.Module):
     def __init__(self, in_dim=4, out_dim=2, hiddem_dim=128):
         super().__init__()
-        self.expand = nn.Linear(in_dim*hiddem_dim, in_dim*hiddem_dim)
         self.linear = nn.Linear(in_dim*hiddem_dim, out_dim*hiddem_dim)
-        self.norm = Qwen2RMSNorm(hidden_size=in_dim*hiddem_dim)
+        self.norm = Qwen2RMSNorm(hidden_size=out_dim*hiddem_dim)
         self.activation = nn.SiLU()
         self.in_dim = in_dim
         self.out_dim = out_dim
@@ -423,20 +385,17 @@ class KVCompress(nn.Module):
             assert num_kv_heads == self.in_dim, f"num_kv_heads must be equal to in_dim, which is {self.in_dim}, but got {num_kv_heads}."
             x = x.reshape(-1, num_kv_heads*head_dim)  # 合并维度 -> [B*S, 4*128]
 
-            # 短路缓存
-            y = x.clone()
-            
-            # 线性变换特征维度
-            x = self.expand(x)          # -> [B*S, 2*128]
+            # 线性变换压缩特征维度
+            x = self.linear(x)          # -> [B*S, 2*128]
             x = self.norm(x)
             
             x = self.activation(x)
-            x = x + y
-            
-            x = self.linear(x)          # -> [B*S, 2*128]
             
             x = x.view(batch, self.out_dim, seq_len, head_dim)  # 恢复形状 -> [4, 868, 2048]
             new_t.append(x)
+        
+        # 激活函数
+        # x = self.activation(x)
 
         return new_t
 
@@ -457,12 +416,11 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         else:
             self.qwen25vl = Qwen2_5_VLForConditionalGeneration.from_pretrained(init_path)
         self.qwen_expert = Qwen2ForCausalLM(config=config.qwenexp_config)
-        # self.awa_model = Qwen2ForCausalLM(config=config.awa_model_config)
         
         self.num_layers = self.config.qwen25vl_config.num_hidden_layers
+        
         self.kv_compress = nn.ModuleList([KVCompress(in_dim=4, out_dim=2) for _ in range(self.num_layers)])
         # self.kv_compress = KVCompress(in_dim=4, out_dim=2)
-        self.awa_model = Qwen2ForCausalLM(config=config.awa_model_config)
         
         # Remove unused embed_tokens
         self.qwen_expert.model.embed_tokens = None
@@ -560,7 +518,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         fill_kv_cache: Optional[bool] = None,
     ):
         if not self.cross_forward_flag:
-            models = [self.qwen25vl.model, self.awa_model, self.qwen_expert.model]
+            models = [self.qwen25vl.model, self.qwen_expert.model]
             
             outputs_embeds = []
 
@@ -584,9 +542,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     outputs_embeds.append(outputs.hidden_states[-1])
                     if use_cache and past_key_values is None:
                         
+                        # kv attn
                         for layer_idx in range(self.num_layers):
-                            outputs.past_key_values.key_cache[layer_idx] = self.kv_compress[layer_idx](outputs.past_key_values.key_cache[layer_idx])[0]
-                            outputs.past_key_values.value_cache[layer_idx] = self.kv_compress[layer_idx](outputs.past_key_values.value_cache[layer_idx])[0]
+                            outputs.past_key_values[layer_idx] = self.kv_compress[layer_idx](outputs.past_key_values[layer_idx])
                         # outputs.past_key_values.key_cache = self.kv_compress(outputs.past_key_values.key_cache)
                         # outputs.past_key_values.value_cache = self.kv_compress(outputs.past_key_values.value_cache)
                         past_key_values = outputs.past_key_values
@@ -608,7 +566,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             
             return outputs_embeds, past_key_values
         else:
-            hidden_state_vl, hidden_state_awa, hidden_state_exp, kv_holder =self.cross_forward(
+            hidden_state_vl, hidden_state_exp, kv_holder =self.cross_forward(
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 past_key_values=past_key_values,
@@ -616,7 +574,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 use_cache=use_cache,
                 fill_kv_cache=fill_kv_cache
             )
-            return [hidden_state_vl, hidden_state_awa, hidden_state_exp], kv_holder
+            return [hidden_state_vl, hidden_state_exp], kv_holder
     
     def cross_forward(
         self,
@@ -627,14 +585,14 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         use_cache: Optional[bool] = None,
         fill_kv_cache: Optional[bool] = None):
         use_cache = use_cache if use_cache is not None else False
-        output_attentions, output_hidden_states, use_cache, return_dict, position_ids_vl, cache_position_vl, causal_mask_vl, position_embeddings_vl, cache_position_awa,  position_ids_awa, causal_mask_awa, position_embeddings_awa, cache_position_exp, position_ids_exp, causal_mask_exp, position_embeddings_exp = self.custom_set_inputs(
+        output_attentions, output_hidden_states, use_cache, return_dict, position_ids_vl, cache_position_vl, causal_mask_vl, position_embeddings_vl, cache_position_exp, position_ids_exp, causal_mask_exp, position_embeddings_exp = self.custom_set_inputs(
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds
         )
         
-        models = [self.qwen25vl.model, self.awa_model.model, self.qwen_expert.model]
+        models = [self.qwen25vl.model, self.qwen_expert.model]
         
         hidden_states = inputs_embeds
                 
@@ -648,17 +606,13 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     hidden_states,
                     attention_mask,
                     causal_mask_vl,
-                    causal_mask_awa,
                     causal_mask_exp,
                     position_ids_vl,
-                    position_ids_awa,
                     position_ids_exp,
                     output_attentions,
                     cache_position_vl,
-                    cache_position_awa,
                     cache_position_exp,
                     position_embeddings_vl,
-                    position_embeddings_awa,
                     position_embeddings_exp,
                     use_reentrant=False,
                 )
@@ -668,23 +622,19 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                                                         inputs_embeds=hidden_states,
                                                         attention_mask=attention_mask,
                                                         casual_mask_vl=causal_mask_vl,
-                                                        casual_mask_awa=causal_mask_awa,
                                                         casual_mask_exp=causal_mask_exp,
                                                         position_ids_vl=position_ids_vl,
-                                                        position_ids_awa=position_ids_awa,
                                                         position_ids_exp=position_ids_exp,
                                                         output_attentions=output_attentions,
                                                         cache_position_vl=cache_position_vl,
-                                                        cache_position_awa=cache_position_awa,
                                                         cache_position_exp=cache_position_exp,
                                                         position_embeddings_vl=position_embeddings_vl,
-                                                        position_embeddings_awa=position_embeddings_awa,
                                                         position_embeddings_exp=position_embeddings_exp
                                                         )
-        hidden_state_vl, hidden_state_awa, hidden_state_exp = hidden_states
+        hidden_state_vl, hidden_state_exp = hidden_states
         hidden_state_exp = self.qwen_expert.model.norm(hidden_state_exp)
         
-        return hidden_state_vl, hidden_state_awa, hidden_state_exp, None
+        return hidden_state_vl, hidden_state_exp, None
     
     def custom_set_inputs(
         self, 
@@ -726,21 +676,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         sample_value = torch.randn([bsize, num_kv_heads, seq_len, head_dim], device=inputs_embeds_vl.device)
         sample_key, sample_value = sample_key_values.update(sample_key, sample_value, 0)
         
-        # prepare inputs for awa model
-        inputs_embeds_awa = inputs_embeds[1]
+        inputs_embeds_exp = inputs_embeds[1]
         past_seen_tokens = sample_key_values.get_seq_length()
-        cache_position_awa = torch.arange(
-                past_seen_tokens, past_seen_tokens + inputs_embeds_awa.shape[1], device=inputs_embeds_awa.device
-            )
-        position_ids_awa = cache_position_awa.unsqueeze(0)
-        causal_mask_awa = self.awa_model.model._update_causal_mask(
-                attention_mask, inputs_embeds_awa, cache_position_awa, sample_key_values, output_attentions
-            )
-        position_embeddings_awa = self.awa_model.model.rotary_emb(inputs_embeds_awa, position_ids_awa)
-        
-        # prepare inputs for expert model
-        inputs_embeds_exp = inputs_embeds[2]
-        past_seen_tokens += 1
         cache_position_exp = torch.arange(
                 past_seen_tokens, past_seen_tokens + inputs_embeds_exp.shape[1], device=inputs_embeds_exp.device
             )
@@ -751,7 +688,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         position_embeddings_exp = self.qwen_expert.model.rotary_emb(inputs_embeds_exp, position_ids_exp)
         
         
-        return output_attentions, output_hidden_states, use_cache, return_dict, position_ids, cache_position_vl, causal_mask_vl, position_embeddings_vl, cache_position_awa, position_ids_awa, causal_mask_awa, position_embeddings_awa, cache_position_exp, position_ids_exp, causal_mask_exp, position_embeddings_exp
+        return output_attentions, output_hidden_states, use_cache, return_dict, position_ids, cache_position_vl, causal_mask_vl, position_embeddings_vl, cache_position_exp, position_ids_exp, causal_mask_exp, position_embeddings_exp
     
     def cross_layer_forward(
         self, 
@@ -760,17 +697,13 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         inputs_embeds, 
         attention_mask,
         casual_mask_vl, 
-        casual_mask_awa,
         casual_mask_exp, 
         position_ids_vl,
-        position_ids_awa,
         position_ids_exp, 
         output_attentions, 
         cache_position_vl,
-        cache_position_awa,
         cache_position_exp, 
         position_embeddings_vl,
-        position_embeddings_awa,
         position_embeddings_exp,
         ):
         
@@ -800,37 +733,17 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             else:
                 present_key_value.key_cache = self.kv_compress[layer_idx](present_key_value.key_cache)
                 present_key_value.value_cache = self.kv_compress[layer_idx](present_key_value.value_cache)
-                
-            if inputs_embeds[1] is not None:
-                inputs_embeds_awa = inputs_embeds[1]
-                
-                awa_outputs = self.expert_decoder_forward(
-                    decoder_layer=layers[1],
-                    hidden_states=inputs_embeds_awa,
-                    attention_mask=casual_mask_awa,
-                    position_ids=position_ids_awa,
-                    past_key_value=present_key_value,
-                    output_attentions=output_attentions,
-                    output_kv=True,
-                    use_cache=False,
-                    cache_position=cache_position_awa,
-                    position_embeddings=position_embeddings_awa
-                )
-                awa_hidden = awa_outputs[0]
-                present_key_value = awa_outputs[2] if output_attentions else awa_outputs[1]
-                
             
-            if inputs_embeds[2] is not None:
-                expert_hidden_states = inputs_embeds[2]
+            if inputs_embeds[1] is not None:
+                expert_hidden_states = inputs_embeds[1]
                 
                 expert_outputs = self.expert_decoder_forward(
-                    decoder_layer=layers[2],
+                    decoder_layer=layers[1],
                     hidden_states=expert_hidden_states,
                     attention_mask=casual_mask_exp,
                     position_ids=position_ids_exp,
                     past_key_value=present_key_value,
                     output_attentions=output_attentions,
-                    output_kv=False,
                     use_cache=False,
                     cache_position=cache_position_exp,
                     position_embeddings=position_embeddings_exp
@@ -844,7 +757,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
             hidden_states_vl = layers[0].mlp(hidden_states_vl)
             hidden_states_vl = residual_vl + hidden_states_vl
         
-        outputs = [hidden_states_vl, awa_hidden, expert_hidden]
+        outputs = [hidden_states_vl, expert_hidden]
         return outputs
 
     def expert_forward(
@@ -974,7 +887,6 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         past_key_value: Optional[Cache] = None,
         output_attentions: Optional[bool] = False,
-        output_kv: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
@@ -984,7 +896,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         
         hidden_states = decoder_layer.input_layernorm(hidden_states)
         
-        hidden_states, self_attn_weights, key_value = self.expert_attention_forward(
+        hidden_states, self_attn_weights = self.expert_attention_forward(
             decoder_layer.self_attn,
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -1007,8 +919,6 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         outputs = (hidden_states,)
         if output_attentions:
             outputs += (self_attn_weights,)
-        if output_kv:
-            outputs += (key_value,)
 
         return outputs
     
@@ -1148,7 +1058,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
         attn_output = attn_layer.o_proj(attn_output)
         
-        return attn_output, attn_weights, [key_states, value_states]
+        return attn_output, attn_weights
     
     def custom_visual_forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor):
         """

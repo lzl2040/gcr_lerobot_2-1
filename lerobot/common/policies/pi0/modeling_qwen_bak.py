@@ -246,6 +246,16 @@ class QwenPolicy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
+        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
+        self.normalize_targets = Normalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
+        self.unnormalize_outputs = Unnormalize(
+            config.output_features, config.normalization_mapping, dataset_stats
+        )
+        
+        # processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
+        # processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
         
         self.processor = AutoProcessor.from_pretrained(config.qwen_path)
         self.processor.tokenizer.padding_side = "left"
@@ -259,11 +269,11 @@ class QwenPolicy(PreTrainedPolicy):
         else:
             self.model = QwenFlowMatching(config, init_load=False)
         self.model.paligemma_with_expert.set_requires_grad()
-        # gc_kwargs = {"use_reentrant": False}
-        # self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing = True
-        # self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
-        # self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing = True
-        # self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
+        gc_kwargs = {"use_reentrant": False}
+        self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing = True
+        self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
+        self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing = True
+        self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
         
     def init_load(self, path):
         """Load the model weights from a checkpoint."""
@@ -290,7 +300,7 @@ class QwenPolicy(PreTrainedPolicy):
             batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
 
         # 先归一化，然后再pad
-        # batch = self.normalize_inputs(batch)
+        batch = self.normalize_inputs(batch)
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
@@ -307,7 +317,7 @@ class QwenPolicy(PreTrainedPolicy):
             original_action_dim = self.config.action_feature.shape[0]
             actions = actions[:, :, :original_action_dim]
 
-            # actions = self.unnormalize_outputs({"action": actions})["action"]
+            actions = self.unnormalize_outputs({"action": actions})["action"]
 
             if self.config.adapt_to_pi_aloha:
                 actions = self._pi_aloha_encode_actions(actions)
@@ -606,7 +616,7 @@ class QwenPolicy(PreTrainedPolicy):
         return actions
 
 
-class QwenFlowMatching(nn.Module):
+class   QwenFlowMatching(nn.Module):
     """
     π0: A Vision-Language-Action Flow Model for General Robot Control
 
@@ -648,16 +658,12 @@ class QwenFlowMatching(nn.Module):
         self.paligemma_with_expert = PaliGemmaWithExpertModel(paligemma_with_export_config, init_load = init_load, init_path = init_path)
 
         # Projections are float32
-        state_proj_width = paligemma_with_export_config.awa_model_config.hidden_size
-        action_proj_width = paligemma_with_export_config.qwenexp_config.hidden_size
-        # self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
-        self.state_proj = nn.Linear(self.config.max_state_dim, state_proj_width)
-        self.action_in_proj = nn.Linear(self.config.max_action_dim, action_proj_width)
-        self.action_out_proj = nn.Linear(action_proj_width, self.config.max_action_dim)
-        self.action_proj_width = action_proj_width
+        self.state_proj = nn.Linear(self.config.max_state_dim, self.config.proj_width)
+        self.action_in_proj = nn.Linear(self.config.max_action_dim, self.config.proj_width)
+        self.action_out_proj = nn.Linear(self.config.proj_width, self.config.max_action_dim)
 
-        self.action_time_mlp_in = nn.Linear(action_proj_width * 2, action_proj_width)
-        self.action_time_mlp_out = nn.Linear(action_proj_width, action_proj_width)
+        self.action_time_mlp_in = nn.Linear(self.config.proj_width * 2, self.config.proj_width)
+        self.action_time_mlp_out = nn.Linear(self.config.proj_width, self.config.proj_width)
 
         self.set_requires_grad()
         
@@ -794,8 +800,7 @@ class QwenFlowMatching(nn.Module):
         # Embed state
         state_emb = self.state_proj(state)
         state_emb = state_emb.to(dtype=self.dtype)
-        state_emb = state_emb[:, None, :]
-        # embs.append(state_emb[:, None, :])
+        embs.append(state_emb[:, None, :])
         bsize = state_emb.shape[0]
         dtype = state_emb.dtype
         device = state_emb.device
@@ -808,7 +813,7 @@ class QwenFlowMatching(nn.Module):
 
         # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = create_sinusoidal_pos_embedding(
-            timestep, self.action_proj_width, min_period=4e-3, max_period=4.0, device=device
+            timestep, self.config.proj_width, min_period=4e-3, max_period=4.0, device=device
         )
         time_emb = time_emb.type(dtype=dtype)
 
@@ -837,7 +842,7 @@ class QwenFlowMatching(nn.Module):
         att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
         att_masks = att_masks[None, :].expand(bsize, len(att_masks))
 
-        return state_emb, embs, pad_masks, att_masks
+        return embs, pad_masks, att_masks
 
     def forward(
         self, input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts, state, actions, noise=None, time=None
@@ -857,7 +862,7 @@ class QwenFlowMatching(nn.Module):
             input_ids, attention_mask, pixel_values, image_grid_thw, pixel_values_videos, video_grid_thw, second_per_grid_ts
         )
         
-        state_embs, suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(state, x_t, time)
 
         # pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
@@ -869,11 +874,11 @@ class QwenFlowMatching(nn.Module):
         # print(f"Prefix Emb shape: {prefix_embs.shape}")
         # print(f"Suffix Emb shape: {suffix_embs.shape}")
 
-        (_, __, suffix_out), ___ = self.paligemma_with_expert.forward(
+        (_, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_masks,
             position_ids=prefix_pos_ids,
             past_key_values=None,
-            inputs_embeds=[prefix_embs, state_embs, suffix_embs],
+            inputs_embeds=[prefix_embs, suffix_embs],
             use_cache=True,
             fill_kv_cache=False,
         )

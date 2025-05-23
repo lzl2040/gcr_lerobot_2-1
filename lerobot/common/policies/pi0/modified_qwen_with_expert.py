@@ -371,8 +371,9 @@ class Qwen2RMSNorm(nn.Module):
 class KVCompress(nn.Module):
     def __init__(self, in_dim=4, out_dim=2, hiddem_dim=128):
         super().__init__()
+        self.expand = nn.Linear(in_dim*hiddem_dim, in_dim*hiddem_dim)
         self.linear = nn.Linear(in_dim*hiddem_dim, out_dim*hiddem_dim)
-        self.norm = Qwen2RMSNorm(hidden_size=out_dim*hiddem_dim)
+        self.norm = Qwen2RMSNorm(hidden_size=in_dim*hiddem_dim*2)
         self.activation = nn.SiLU()
         self.in_dim = in_dim
         self.out_dim = out_dim
@@ -385,17 +386,20 @@ class KVCompress(nn.Module):
             assert num_kv_heads == self.in_dim, f"num_kv_heads must be equal to in_dim, which is {self.in_dim}, but got {num_kv_heads}."
             x = x.reshape(-1, num_kv_heads*head_dim)  # 合并维度 -> [B*S, 4*128]
 
-            # 线性变换压缩特征维度
-            x = self.linear(x)          # -> [B*S, 2*128]
+            # 短路缓存
+            y = x.clone()
+            
+            # 线性变换特征维度
+            x = self.expand(x)          # -> [B*S, 2*128]
             x = self.norm(x)
             
             x = self.activation(x)
+            x = x + y
+            
+            x = self.linear(x)          # -> [B*S, 2*128]
             
             x = x.view(batch, self.out_dim, seq_len, head_dim)  # 恢复形状 -> [4, 868, 2048]
             new_t.append(x)
-        
-        # 激活函数
-        # x = self.activation(x)
 
         return new_t
 

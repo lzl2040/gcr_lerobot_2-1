@@ -246,16 +246,6 @@ class QwenPolicy(PreTrainedPolicy):
         super().__init__(config)
         config.validate_features()
         self.config = config
-        self.normalize_inputs = Normalize(config.input_features, config.normalization_mapping, dataset_stats)
-        self.normalize_targets = Normalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        self.unnormalize_outputs = Unnormalize(
-            config.output_features, config.normalization_mapping, dataset_stats
-        )
-        
-        # processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-3B-Instruct/"
-        # processor_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
         
         self.processor = AutoProcessor.from_pretrained(config.qwen_path)
         self.processor.tokenizer.padding_side = "left"
@@ -269,11 +259,11 @@ class QwenPolicy(PreTrainedPolicy):
         else:
             self.model = QwenFlowMatching(config, init_load=False)
         self.model.paligemma_with_expert.set_requires_grad()
-        gc_kwargs = {"use_reentrant": False}
-        self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing = True
-        self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
-        self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing = True
-        self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
+        # gc_kwargs = {"use_reentrant": False}
+        # self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing = True
+        # self.model.paligemma_with_expert.qwen25vl.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
+        # self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing = True
+        # self.model.paligemma_with_expert.qwen_expert.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gc_kwargs)
         
     def init_load(self, path):
         """Load the model weights from a checkpoint."""
@@ -300,7 +290,7 @@ class QwenPolicy(PreTrainedPolicy):
             batch[OBS_ROBOT] = self._pi_aloha_decode_state(batch[OBS_ROBOT])
 
         # 先归一化，然后再pad
-        batch = self.normalize_inputs(batch)
+        # batch = self.normalize_inputs(batch)
 
         # Action queue logic for n_action_steps > 1. When the action_queue is depleted, populate it by
         # querying the policy.
@@ -317,7 +307,7 @@ class QwenPolicy(PreTrainedPolicy):
             original_action_dim = self.config.action_feature.shape[0]
             actions = actions[:, :, :original_action_dim]
 
-            actions = self.unnormalize_outputs({"action": actions})["action"]
+            # actions = self.unnormalize_outputs({"action": actions})["action"]
 
             if self.config.adapt_to_pi_aloha:
                 actions = self._pi_aloha_encode_actions(actions)
@@ -880,7 +870,7 @@ class QwenFlowMatching(nn.Module):
             attention_mask=att_masks,
             position_ids=prefix_pos_ids,
             past_key_values=None,
-            inputs_embeds=[prefix_embs, suffix_embs],
+            inputs_embeds=[prefix_embs, suffix_embs[:, 0:1, :], suffix_embs[:, 1:, :]],
             use_cache=True,
             fill_kv_cache=False,
         )
