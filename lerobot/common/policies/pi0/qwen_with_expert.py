@@ -55,8 +55,14 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     """
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
+    if q is not None:
+        q_embed = (q * cos) + (rotate_half(q) * sin)
+    else:
+        q_embed = None
+    if k is not None:
+        k_embed = (k * cos) + (rotate_half(k) * sin)
+    else:
+        k_embed = None
     return q_embed, k_embed
 
 def apply_rope(x, positions, max_wavelength=10_000):
@@ -298,15 +304,15 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 vocab_size=151936,
                 bos_token_id=151643,
                 eos_token_id=151643,
-                hidden_size=1024,
+                hidden_size=768,
                 attention_dropout=0.0,
                 hidden_act="silu",
-                intermediate_size=5376,
+                intermediate_size=3584,
                 initializer_range=0.02,
                 max_position_embeddings=131072,
                 model_type="qwen2",
                 max_window_layers=28,
-                num_attention_heads=8,
+                num_attention_heads=6,
                 num_hidden_layers=28,
                 num_key_value_heads=2,
                 rms_norm_eps=1e-06,
@@ -439,6 +445,64 @@ class KVCompress(nn.Module):
             new_t.append(x)
 
         return new_t
+    
+class QueryCompression(nn.Module):
+    def __init__(self, in_dim=2, out_dim=4, hiddem_dim=128):
+        super().__init__()
+        self.linear = nn.Linear(out_dim*hiddem_dim, out_dim*hiddem_dim)
+        self.norm = Qwen2RMSNorm(hidden_size=out_dim*hiddem_dim)
+        self.activation = nn.SiLU()
+        self.compress = nn.Linear(in_dim*hiddem_dim, out_dim*hiddem_dim)
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+
+    def forward(self, x):
+        
+        x_shape = x.shape # B L N H
+        x = x.reshape(x_shape[0], x_shape[1], self.in_dim*x_shape[-1]) # B L N*H
+        
+        x = self.compress(x)          # -> [B*S, 2*128]
+        x = self.norm(x)
+        x = self.activation(x)
+        x = self.linear(x)          # -> [B*S, 2*128]
+        
+        x = x.reshape(x_shape[0], x_shape[1], self.out_dim, x_shape[-1])  # B L N* H
+        
+        return x
+        
+    
+class KvRepresentation(nn.Module):
+    def __init__(self, hidden=128, in_head=4, out_head=2):
+        super().__init__()
+        # self.linear = nn.Linear(hidden*in_head, hidden*in_head)
+        # self.norm = Qwen2RMSNorm(hidden*in_head)
+        # self.activate_1 = nn.SiLU()
+        self.compress_to_outhead = nn.Linear(hidden*in_head, hidden*out_head)
+        self.norm_2 = Qwen2RMSNorm(hidden*out_head)
+        
+        self.compress_to_tgtdim = nn.Linear(hidden*out_head, out_head)
+        self.linear_2 = nn.Linear(hidden, hidden)
+        self.norm_3 = Qwen2RMSNorm(hidden)
+        self.activate_3 = nn.SiLU()
+        
+    
+    def forward(self, x):
+        
+        x = self.compress_to_outhead(x) # -> [B, len, 128, 128*2]
+        x = self.norm_2(x)
+        x = self.compress_to_tgtdim(x) # -> [B, len, 128, 2]
+        x = x.transpose(-1, -2) # -> [B, len, 2, 128]
+        
+        y = x.clone()
+        
+        x = self.norm_3(x)
+        x = self.activate_3(x)
+        x = self.linear_2(x) # -> [B, len, 2, 128]
+        
+        x = x + y
+        
+        return x
+        
 
 class PaliGemmaWithExpertModel(PreTrainedModel):
     config_class = PaliGemmaWithExpertConfig
@@ -460,7 +524,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         # self.awa_model = Qwen2ForCausalLM(config=config.awa_model_config)
         
         self.num_layers = self.config.qwen25vl_config.num_hidden_layers
-        self.kv_compress = nn.ModuleList([KVCompress(in_dim=4, out_dim=2) for _ in range(self.num_layers)])
+        # self.kv_compress = nn.ModuleList([KVCompress(in_dim=4, out_dim=2) for _ in range(self.num_layers)])
+        self.kv_repre = nn.ModuleList([KvRepresentation(hidden=128, in_head=4, out_head=2) for _ in range(self.num_layers)])
+        self.query_compress = nn.ModuleList([QueryCompression(in_dim=6, out_dim=4, hiddem_dim=128) for _ in range(self.num_layers)])
         # self.kv_compress = KVCompress(in_dim=4, out_dim=2)
         self.awa_model = Qwen2ForCausalLM(config=config.awa_model_config)
         
@@ -584,9 +650,9 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                     outputs_embeds.append(outputs.hidden_states[-1])
                     if use_cache and past_key_values is None:
                         
-                        for layer_idx in range(self.num_layers):
-                            outputs.past_key_values.key_cache[layer_idx] = self.kv_compress[layer_idx](outputs.past_key_values.key_cache[layer_idx])[0]
-                            outputs.past_key_values.value_cache[layer_idx] = self.kv_compress[layer_idx](outputs.past_key_values.value_cache[layer_idx])[0]
+                        # for layer_idx in range(self.num_layers):
+                        #     outputs.past_key_values.key_cache[layer_idx] = self.kv_compress[layer_idx](outputs.past_key_values.key_cache[layer_idx])[0]
+                        #     outputs.past_key_values.value_cache[layer_idx] = self.kv_compress[layer_idx](outputs.past_key_values.value_cache[layer_idx])[0]
                         # outputs.past_key_values.key_cache = self.kv_compress(outputs.past_key_values.key_cache)
                         # outputs.past_key_values.value_cache = self.kv_compress(outputs.past_key_values.value_cache)
                         past_key_values = outputs.past_key_values
@@ -795,17 +861,18 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
                 position_embeddings=position_embeddings_vl
             )
             
-            if isinstance(present_key_value, list):
-                present_key_value = self.kv_compress[layer_idx](present_key_value)
-            else:
-                present_key_value.key_cache = self.kv_compress[layer_idx](present_key_value.key_cache)
-                present_key_value.value_cache = self.kv_compress[layer_idx](present_key_value.value_cache)
+            # if isinstance(present_key_value, list):
+            #     present_key_value = self.kv_compress[layer_idx](present_key_value)
+            # else:
+            #     present_key_value.key_cache = self.kv_compress[layer_idx](present_key_value.key_cache)
+            #     present_key_value.value_cache = self.kv_compress[layer_idx](present_key_value.value_cache)
                 
             if inputs_embeds[1] is not None:
                 inputs_embeds_awa = inputs_embeds[1]
                 
-                awa_outputs = self.expert_decoder_forward(
+                awa_outputs = self.awa_decoder_forward(
                     decoder_layer=layers[1],
+                    layer_idx=layer_idx,
                     hidden_states=inputs_embeds_awa,
                     attention_mask=casual_mask_awa,
                     position_ids=position_ids_awa,
@@ -965,6 +1032,90 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         
         return output if return_dict else output.to_tuple()
         
+    def awa_decoder_forward(
+        self,
+        decoder_layer,
+        layer_idx: int,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value: Optional[Cache] = None,
+        output_attentions: Optional[bool] = False,
+        output_kv: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        **kwargs: Unpack[FlashAttentionKwargs],
+    ):
+        assert past_key_value is not None 
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, decoder_layer.self_attn.head_dim)
+        
+        state_query = decoder_layer.self_attn.q_proj(hidden_states).view(hidden_shape) # (batch_size, seq_len, num_heads, head_dim)
+        
+        state_query = self.query_compress[layer_idx](state_query)
+        
+        cos, sin = position_embeddings
+        state_query, _ = apply_rotary_pos_emb(state_query, None, cos, sin)
+        # repeat state_query until it reach length of kv 
+        seq_len = past_key_value[0].shape[2]
+        state_query = state_query.repeat((1, seq_len, 1, 1))
+        state_query = state_query[:, :, :, :, None]
+        key = past_key_value[0][:, :, :, :, None].transpose(-1, -2) # (batch_size, num_heads, seq_len, 1, head_dim)
+        key = key.transpose(2, 1) # (batch_size, seq_len, num_heads, 1, head_dim)
+        value = past_key_value[1][:, :, :, :, None].transpose(-1, -2) # (batch_size, num_heads, seq_len, 1, head_dim)
+        value = value.transpose(2, 1) # (batch_size, seq_len, num_heads, 1, head_dim)
+        head_dim = key.shape[-1]
+        # print(f"key shape: {key.shape}, state query shape: {state_query.shape}")
+        key_weight_awa = torch.matmul(state_query, key) / torch.sqrt(torch.tensor(head_dim, dtype=key.dtype, device=key.device)) # (batch_size, seq_len, num_heads, head_dim, head_dim)
+        value_weight_awa = torch.matmul(state_query, value) # (batch_size, seq_len, num_heads, head_dim, head_dim)
+        weight_awa_threshold, weight_awa_index = torch.topk(key_weight_awa, k=32, dim=3)
+        filter_mask = torch.zeros_like(key_weight_awa)
+        filter_mask.scatter_(3, weight_awa_index, 1)
+        key_weight_awa = key_weight_awa * filter_mask
+        value_weight_awa = value_weight_awa * filter_mask
+        key_weight_awa_shape = key_weight_awa.shape
+        key_weight_awa = key_weight_awa.view(key_weight_awa_shape[0], key_weight_awa_shape[1], key_weight_awa_shape[4],  -1)
+        value_weight_awa = value_weight_awa.view(key_weight_awa_shape[0], key_weight_awa_shape[1], key_weight_awa_shape[4],  -1)
+        
+        key_awa = self.kv_repre[layer_idx](key_weight_awa)
+        value_awa = self.kv_repre[layer_idx](value_weight_awa)
+        key_awa = key_awa.transpose(2, 1) # (batch_size, seq_len, num_heads, head_dim)
+        value_awa = value_awa.transpose(2, 1) # (batch_size, seq_len, num_heads, head_dim)
+        
+        past_key_value = [key_awa, value_awa]
+        
+        residual = hidden_states
+        
+        hidden_states = decoder_layer.input_layernorm(hidden_states)
+        
+        hidden_states, self_attn_weights, key_value = self.expert_attention_forward(
+            decoder_layer.self_attn,
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_value=past_key_value,
+            output_attentions=output_attentions,
+            use_cache=use_cache,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+        hidden_states = residual + hidden_states
+        
+        # Fully Connected
+        residual = hidden_states
+        hidden_states = decoder_layer.post_attention_layernorm(hidden_states)
+        hidden_states = decoder_layer.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+        
+        outputs = (hidden_states,)
+        if output_attentions:
+            outputs += (self_attn_weights,)
+        if output_kv:
+            outputs += (key_value,)
+
+        return outputs
     
     def expert_decoder_forward(
         self,

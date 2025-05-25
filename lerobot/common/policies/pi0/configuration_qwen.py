@@ -13,7 +13,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 class QwenConfig(PreTrainedConfig):
 
     qwen_path: str = "/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/"
-    qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
+    # qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
     
     # Input / output structure.
     n_obs_steps: int = 1
