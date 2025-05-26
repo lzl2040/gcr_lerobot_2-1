@@ -361,7 +361,7 @@ def train(cfg: TrainPipelineConfig):
         
     
     while step < cfg.steps:
-        logger.info(f"Step {step}/{cfg.steps}")
+        # logger.info(f"Step {step}/{cfg.steps}")
         batch_start = time.perf_counter()
         batch = next(dataloader_iter)
         data_time = time.perf_counter() - batch_start
