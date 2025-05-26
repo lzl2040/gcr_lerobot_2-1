@@ -361,6 +361,7 @@ def train(cfg: TrainPipelineConfig):
         
     
     while step < cfg.steps:
+        logger.info(f"Step {step}/{cfg.steps}")
         batch_start = time.perf_counter()
         batch = next(dataloader_iter)
         data_time = time.perf_counter() - batch_start
@@ -386,6 +387,8 @@ def train(cfg: TrainPipelineConfig):
                 optimizer.step()
             optimizer.zero_grad()
             optim_time = time.perf_counter() - optim_start
+            
+            torch.cuda.empty_cache()
         
             # 更新指标
             train_tracker.optim_s = optim_time
