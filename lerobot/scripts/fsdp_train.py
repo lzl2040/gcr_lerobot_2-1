@@ -236,6 +236,9 @@ def train(cfg: TrainPipelineConfig):
     # 统计模型参数量
     if rank == 0:
         logger.info(f"Model parameters: {sum(p.numel() for p in policy.parameters())}")
+        logger.info(f"Qwen VL visual parameters: {sum(p.numel() for p in policy.model.paligemma_with_expert.qwen25vl.visual.parameters())}")
+        logger.info(f"Qwen VL parameters: {sum(p.numel() for p in policy.model.paligemma_with_expert.qwen25vl.parameters())}")
+        logger.info(f"kv repre model parameters: {sum(p.numel() for p in policy.model.paligemma_with_expert.kv_repre.parameters())}")
         logger.info(f"AWA Expert parameters: {sum(p.numel() for p in policy.model.paligemma_with_expert.awa_model.parameters())}")
         logger.info(f"Action Expert parameters: {sum(p.numel() for p in policy.model.paligemma_with_expert.qwen_expert.parameters())}")
     

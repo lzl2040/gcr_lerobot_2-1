@@ -304,15 +304,15 @@ class PaliGemmaWithExpertConfig(PretrainedConfig):
                 vocab_size=151936,
                 bos_token_id=151643,
                 eos_token_id=151643,
-                hidden_size=768,
+                hidden_size=1024,
                 attention_dropout=0.0,
                 hidden_act="silu",
-                intermediate_size=3584,
+                intermediate_size=5376,
                 initializer_range=0.02,
                 max_position_embeddings=131072,
                 model_type="qwen2",
                 max_window_layers=28,
-                num_attention_heads=6,
+                num_attention_heads=8,
                 num_hidden_layers=28,
                 num_key_value_heads=2,
                 rms_norm_eps=1e-06,
@@ -535,7 +535,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         
         self.num_layers = self.config.qwen25vl_config.num_hidden_layers
         # self.kv_compress = nn.ModuleList([KVCompress(in_dim=4, out_dim=2) for _ in range(self.num_layers)])
-        self.kv_repre = nn.ModuleList([KvRepresentation(hidden=128, in_head=[6, 4], out_head=2) for _ in range(self.num_layers)])
+        self.kv_repre = nn.ModuleList([KvRepresentation(hidden=128, in_head=[8, 4], out_head=2) for _ in range(self.num_layers)])
         # self.query_compress = nn.ModuleList([QueryCompression(in_dim=6, out_dim=4, hiddem_dim=128) for _ in range(self.num_layers)])
         # self.kv_compress = KVCompress(in_dim=4, out_dim=2)
         self.awa_model = Qwen2ForCausalLM(config=config.awa_model_config)

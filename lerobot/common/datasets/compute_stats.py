@@ -265,10 +265,10 @@ def aggregate_multi_stats(ls_datasets: list, data_names: list, max_dim: int) -> 
         if "action" in data_key or "state" in data_key:
             if "action" in data_key:
                 start_dim = 7
-                d_len = 22 - start_dim
+                d_len = 14 - start_dim
             if "state" in data_key:
                 start_dim = 8
-                d_len = 20 - start_dim
+                d_len = 16 - start_dim
             agi_d = None
             for i in range(len(ls_datasets)):
                 if "agi" in data_names[i]:
