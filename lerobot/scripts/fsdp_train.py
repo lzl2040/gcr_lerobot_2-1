@@ -154,6 +154,7 @@ def train_step(model, batch, scaler, cfg):
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     # 初始化分布式环境
+    # os.environ["NODE_RANK"] = "0"
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ["LOCAL_RANK"])
     world_rank = int(os.environ["RANK"])
@@ -210,6 +211,7 @@ def train(cfg: TrainPipelineConfig):
             seed += (step-1)
             
     image_transforms = (ImageTransforms(cfg.dataset.image_transforms))
+    print(image_transforms)
     dataset = MultiDatasetforDistTraining(
         cfg=cfg, 
         image_transforms=image_transforms,
@@ -442,7 +444,7 @@ if __name__ == "__main__":
     # os.environ["TOKENIZERS_PARALLELISM"] = "false"
     # os.environ["OMPI_ALLOW_RUN_AS_ROOT"] = "1"
     # os.environ["OMPI_ALLOW_RUN_AS_ROOT_CONFIRM"] = "1"
-    os.environ['WANDB_API_KEY'] = '7f1c1acfe477063902c617b0e8ef24d2b76ed447'
+    os.environ['WANDB_API_KEY'] = '9e1c3ac77856b8ebb5573c4e1e250c84aabfb904'
     
     # 启动训练
     train()

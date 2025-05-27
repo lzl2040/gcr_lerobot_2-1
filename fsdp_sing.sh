@@ -4,11 +4,11 @@
 NNODES=1
 NPROC_PER_NODE=2
 JOB_NAME=""
-DATA_MIX="oxe_magic_soup_plus"
+DATA_MIX="libero"
 OPTIMIZER_LR=2.5e-5
 OPTIMIZER_DECAY_LR=2.5e-6
-SCHEDULER_WARMUP_STEPS=2000
-SCHEDULER_DECAY_STEPS=50000
+SCHEDULER_WARMUP_STEPS=1000
+SCHEDULER_DECAY_STEPS=30000
 SCHEDULER_PLATFORM_STEPS=1
 
 # 解析命令行参数
@@ -86,6 +86,7 @@ torchrun \
     --output_dir="$FIXED_OUTPUT_DIR" \
     --dataset.repo_id="whatever" \
     --batch_size=4 \
+    --gradient_accumulation_steps=2 \
     --data_mix=$DATA_MIX \
     --dataset.processor="/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/" \
     --dataset.parent_dir="/mnt/wangxiaofa/robot_dataset/lerobot-format/" \
@@ -98,7 +99,7 @@ torchrun \
     --policy.freeze_vision_encoder=false \
     --policy.train_expert_only=false \
     --wandb.enable=true \
-    --wandb.project="pi0first" \
+    --wandb.project="fsdq_qwen_pi0_ft" \
     --job_name="$JOB_NAME" \
     --log_dir="/mnt/wangxiaofa/logs" \
     --resume=true
