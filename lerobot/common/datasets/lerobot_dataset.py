@@ -1683,7 +1683,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 else:
                     vision['video'] = video
                 
-                vision["image"].append(vision["video"][-1])
+                vision["image"].append(vision["video"][-1].resize((224, 224)))
                 # Resize frames in the video
                 for i in range(len(vision['video'])):
                     vision["video"][i] = vision["video"][i].resize((112, 112))
@@ -1691,9 +1691,9 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
             else:
                 if isinstance(item[key], list):
                     if len(item[key]) > 0:
-                        vision["image"].append(item[key][0])
+                        vision["image"].append(item[key][0].resize((224, 224)))
                 elif isinstance(item[key], Image.Image):
-                    vision["image"].append(item[key])
+                    vision["image"].append(item[key].resize((224, 224)))
                 else:
                     logging.warning(f"Unexpected type for {key}: {type(item[key])}, from {item['source']}")
 
