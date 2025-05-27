@@ -13,6 +13,7 @@ from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
 class QwenConfig(PreTrainedConfig):
 
     qwen_path: str = "/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/"
+    # qwen_path: str = "/Data/lzl/qwen2.5_vl_7b/Qwen2.5-VL-7B-Instruct"
     # qwen_path = "/datassd_1T/qwen25vl/Qwen2.5-VL-7B-Instruct/"
     
     # Input / output structure.
@@ -20,7 +21,7 @@ class QwenConfig(PreTrainedConfig):
     chunk_size: int = 50
     n_action_steps: int = 50
     
-    max_frame: int = 3
+    max_frame: int = 1
 
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
