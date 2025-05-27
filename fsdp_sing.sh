@@ -89,7 +89,7 @@ torchrun \
     --policy.type="qwen" \
     --output_dir="$FIXED_OUTPUT_DIR" \
     --dataset.repo_id="whatever" \
-    --batch_size=3 \
+    --batch_size=4 \
     --gradient_accumulation_steps=2 \
     --data_mix=$DATA_MIX \
     --dataset.processor="/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/" \
