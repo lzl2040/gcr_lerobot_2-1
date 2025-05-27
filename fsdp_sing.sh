@@ -38,6 +38,10 @@ while [[ $# -gt 0 ]]; do
             JOB_NAME="$2"
             shift 2
             ;;
+        --data_mix)
+            DATA_MIX="$2"
+            shift 2
+            ;;
         --optimizer_lr)
             OPTIMIZER_LR="$2"
             shift 2
