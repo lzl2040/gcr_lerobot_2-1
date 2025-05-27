@@ -1579,8 +1579,8 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 
                 item[f"observation.images.{new_key}"] = copy.deepcopy(item[f"observation.images.{old_key}"])
                 exist_image = item[f"observation.images.{old_key}"]
-                
-                del item[f"observation.images.{old_key}"]
+                if new_key != old_key:
+                    del item[f"observation.images.{old_key}"]
             else:
                 # if missing, use zero image
                 key_to_pad.append(new_key)
