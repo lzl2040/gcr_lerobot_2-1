@@ -210,9 +210,9 @@ def train(cfg: TrainPipelineConfig):
             step = sorted(steps)[-1] + 1
             seed += (step-1)
             
-    # image_transforms = (ImageTransforms(cfg.dataset.image_transforms))
-    image_transforms = None
-    print(image_transforms)
+    image_transforms = (ImageTransforms(cfg.dataset.image_transforms))
+    # image_transforms = None
+    print(f"image transforms:{image_transforms}")
     dataset = MultiDatasetforDistTraining(
         cfg=cfg, 
         image_transforms=image_transforms,
