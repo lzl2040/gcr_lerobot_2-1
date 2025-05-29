@@ -10,6 +10,7 @@ OPTIMIZER_DECAY_LR=2.5e-6
 SCHEDULER_WARMUP_STEPS=1000
 SCHEDULER_DECAY_STEPS=30000
 SCHEDULER_PLATFORM_STEPS=1
+MAX_FRAME=3
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --data_mix)
             DATA_MIX="$2"
+            shift 2
+            ;;
+        --max_frame)
+            MAX_FRAME="$2"
             shift 2
             ;;
         --optimizer_lr)
@@ -94,6 +99,7 @@ torchrun \
     --data_mix=$DATA_MIX \
     --dataset.processor="/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/" \
     --dataset.parent_dir="/mnt/wangxiaofa/robot_dataset/lerobot-format/" \
+    --policy.max_frame=$MAX_FRAME \
     --policy.scheduler_warmup_steps=$SCHEDULER_WARMUP_STEPS \
     --policy.scheduler_decay_steps=$SCHEDULER_DECAY_STEPS \
     --policy.scheduler_platform_steps=$SCHEDULER_PLATFORM_STEPS \
