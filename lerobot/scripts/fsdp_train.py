@@ -233,7 +233,7 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         device="cpu",
         ds_meta=dataset.meta,
-        weight_pt_path="/mnt/wangxiaofa/original_qw/0526_testrun%2B03_df10_full_Prometheus/step25000.pt"
+        weight_pt_path="/mnt/wangxiaofa/original_qw/0526_testrun+03_df10_full_Prometheus/step25000.pt"
     )
     
     # 统计模型参数量
