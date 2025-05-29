@@ -296,7 +296,7 @@ def train(cfg: TrainPipelineConfig):
         policy,
         auto_wrap_policy=auto_wrap_policy,
         mixed_precision=mixed_precision,
-        sharding_strategy=ShardingStrategy.HYBRID_SHARD,
+        sharding_strategy=ShardingStrategy.FULL_SHARD,
         device_id=local_rank,
         use_orig_params=True
     )
