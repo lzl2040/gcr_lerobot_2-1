@@ -47,7 +47,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.oxe_configs import OXE_DATASET_CONFIGS
 from lerobot.common.datasets.mixtures import OXE_NAMED_MIXTURES
-from lerobot.common.datasets.utils import cycle
+from lerobot.common.datasets.utils import cycle, save_to_json
 # from lerobot.common.datasets.factory import resolve_delta_timestamps
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats, aggregate_multi_stats
 from lerobot.common.datasets.transforms import ImageTransforms
@@ -1472,6 +1472,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                                   "observation.images.secondary", 
                                   "observation.images.wrist"] # follow https://github.com/openvla/openvla/blob/main/prismatic/vla/datasets/rlds/oxe/configs.py
         self.stats = aggregate_multi_stats(self.datasets, self.dataset_names, self.max_action_dim) # Note: I modified this function
+        save_to_json(self.stats, os.path.join("/mnt/wangxiaofa/original_qw", f"{cfg.data_mix}_stats.json"))
         # print(f"Aggregated stats:{self.stats}")
         # update meta_features
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - meta features: {meta_features}")
