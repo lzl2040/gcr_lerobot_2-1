@@ -158,21 +158,12 @@ def make_policy(
 
     if weight_pt_path:
         weights = torch.load(weight_pt_path, map_location="cpu")
-        # 过滤掉包含 "gemma_expert" 的权重
-        # unfit_weight_key = [
-        #     "model.state_proj", "model.action_in_proj",
-        #     "model.action_out_proj", "model.action_time_mlp_in",
-        #     "model.action_time_mlp_out"
-        # ]
-        unfit_weight_key = []
-
-        # 过滤掉含 "gemma_expert" 或 unfit_weight_key 中任意关键字的权重
-        filtered_weights = {
-            k: v for k, v in weights.items()
-            if "gemma_expert" not in k and not any(key in k for key in unfit_weight_key)
-        }
-        policy.load_state_dict(filtered_weights, strict=False)
+        if "model.paligemma_with_expert.qwen_expert.lm_head.weight" in weights:
+            del weights["model.paligemma_with_expert.qwen_expert.lm_head.weight"]
+            del weights["model.paligemma_with_expert.awa_model.lm_head.weight"]
+        policy.load_state_dict(weights, strict=True)
         print(f"Load pt weights from:{weight_pt_path}")
+        del weights
     
     # policy.to(device)
     assert isinstance(policy, nn.Module)
