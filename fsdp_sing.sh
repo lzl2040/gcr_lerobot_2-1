@@ -11,6 +11,8 @@ SCHEDULER_WARMUP_STEPS=1000
 SCHEDULER_DECAY_STEPS=30000
 SCHEDULER_PLATFORM_STEPS=1
 MAX_FRAME=3
+BATCH_SIZE=3
+GRADIENT_ACC=2
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -45,6 +47,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --max_frame)
             MAX_FRAME="$2"
+            shift 2
+            ;;
+        --bs)
+            BATCH_SIZE="$2"
+            shift 2
+            ;;
+        --gradient_acc)
+            GRADIENT_ACC="$2"
             shift 2
             ;;
         --optimizer_lr)
@@ -94,8 +104,8 @@ torchrun \
     --policy.type="qwen" \
     --output_dir="$FIXED_OUTPUT_DIR" \
     --dataset.repo_id="whatever" \
-    --batch_size=3 \
-    --gradient_accumulation_steps=2 \
+    --batch_size=$BATCH_SIZE \
+    --gradient_accumulation_steps=$GRADIENT_ACC \
     --data_mix=$DATA_MIX \
     --dataset.processor="/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/" \
     --dataset.parent_dir="/mnt/wangxiaofa/robot_dataset/lerobot-format/" \
