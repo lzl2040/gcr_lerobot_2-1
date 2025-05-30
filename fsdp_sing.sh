@@ -8,7 +8,7 @@ DATA_MIX="libero"
 OPTIMIZER_LR=2.5e-5
 OPTIMIZER_DECAY_LR=2.5e-6
 SCHEDULER_WARMUP_STEPS=1000
-SCHEDULER_DECAY_STEPS=12000
+SCHEDULER_DECAY_STEPS=30000
 SCHEDULER_PLATFORM_STEPS=1
 MAX_FRAME=3
 BATCH_SIZE=3
@@ -112,7 +112,7 @@ torchrun \
     --batch_size=$BATCH_SIZE \
     --gradient_accumulation_steps=$GRADIENT_ACC \
     --data_mix=$DATA_MIX \
-    --save_freq=$SAVE_FREQ \s
+    --save_freq=$SAVE_FREQ \
     --dataset.processor="/mnt/wangxiaofa/qwen_params/Qwen2.5-VL-7B-Instruct/" \
     --dataset.parent_dir="/mnt/wangxiaofa/robot_dataset/lerobot-format/" \
     --policy.max_frame=$MAX_FRAME \
