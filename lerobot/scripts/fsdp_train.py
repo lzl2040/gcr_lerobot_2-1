@@ -154,7 +154,7 @@ def train_step(model, batch, scaler, cfg):
 @parser.wrap()
 def train(cfg: TrainPipelineConfig):
     # 初始化分布式环境
-    os.environ["NODE_RANK"] = "0"
+    # os.environ["NODE_RANK"] = "0"
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ["LOCAL_RANK"])
     world_rank = int(os.environ["RANK"])
