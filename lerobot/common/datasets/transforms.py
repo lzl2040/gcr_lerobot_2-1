@@ -260,7 +260,7 @@ class ImageTransforms(Transform):
             # self.tf = self.base_tf
         else:
             self.tf = RandomSubsetApply(
-                base_transforms=self.base_tf,
+                # base_transforms=self.base_tf,
                 transforms=list(self.transforms.values()),
                 p=self.weights,
                 n_subset=n_subset,
