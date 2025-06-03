@@ -1623,6 +1623,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         if not exist_image_valide:
             sample_image = Image.fromarray(np.ones((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
         
+        sample_image = Image.fromarray(np.ones((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
         # print(sample_image)
         
         for new_key in key_to_pad:
