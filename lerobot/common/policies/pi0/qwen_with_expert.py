@@ -1090,7 +1090,7 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         key_weight_awa_shape = key_weight_awa.shape # (batch_size, seq_len, head_dim, head_dim)
         key_weight_awa = key_weight_awa.view(key_weight_awa_shape[0], key_weight_awa_shape[1], -1, key_weight_awa_shape[4])
         value_weight_awa = value_weight_awa.view(key_weight_awa_shape[0], key_weight_awa_shape[1], -1, key_weight_awa_shape[4])
-        weight_awa_threshold, weight_awa_index = torch.topk(key_weight_awa, k=8, dim=2, sorted=False)
+        weight_awa_threshold, weight_awa_index = torch.topk(key_weight_awa, k=12, dim=2, sorted=False)
         filter_mask = torch.zeros_like(key_weight_awa, dtype=torch.bool, device=key_weight_awa.device)
         filter_mask.scatter_(2, weight_awa_index, True)
         key_weight_awa = key_weight_awa * filter_mask.to(key_weight_awa.dtype)

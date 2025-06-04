@@ -254,7 +254,16 @@ def train(cfg: TrainPipelineConfig):
             cfg.resume = os.path.join(cfg.output_dir, f"step{step-1}.pt")
             logger.info(f"Resuming from checkpoint {cfg.resume} at step {step}")
             model_state_dict = torch.load(cfg.resume, map_location="cpu")
+            key_to_remove = []
+            for k, v in model_state_dict.items():
+                if "awa_model.lm_head" in k or "qwen_expert.lm_head" in k:
+                    key_to_remove.append(k)
+            for k in key_to_remove:
+                del model_state_dict[k]
+            
             policy.load_state_dict(model_state_dict, strict=True)
+            del model_state_dict
+            del key_to_remove
         else:
             cfg.resume = False
             logger.info("No checkpoint found, starting from scratch.")

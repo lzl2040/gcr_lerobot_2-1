@@ -73,7 +73,9 @@ class WandBLogger:
             if self.cfg.id is not None:
                 wandb_run_id = self.cfg.id
             else:
-                wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir)
+                wandb_run_id = None
+            # else:
+            #     wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir)
         else:
             wandb_run_id = None
         # wandb_run_id = get_wandb_run_id_from_filesystem(self.log_dir) if cfg.resume else None
@@ -90,7 +92,7 @@ class WandBLogger:
             save_code=False,
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
-            resume="allow" if cfg.resume else None,
+            resume="never" if cfg.resume else None,
         )
         print(colored("Logs will be synced with wandb.", "blue", attrs=["bold"]))
         logging.info(f"Track this run --> {colored(wandb.run.get_url(), 'yellow', attrs=['bold'])}")

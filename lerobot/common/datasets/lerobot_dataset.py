@@ -1424,12 +1424,28 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - {dataset_name} not found in vla2root.json, skipping...")
         self.is_ft = is_ft
         if is_ft:
-            self.dataset = ConcatDataset(self.datasets)
+            self.id2dataset = {}
             self.num_episodes = 0
             self.dataset_len = 0
+            dataset_id = 0
             for dataset in self.datasets:
-                self.num_episodes += dataset.num_episodes
-                self.dataset_len += dataset.num_frames
+                num_frames = dataset.num_frames
+                self.dataset_len += num_frames
+                num_episodes = dataset.num_episodes
+                self.num_episodes += num_episodes
+                start_id = self.dataset_len - num_frames
+                end_id = self.dataset_len
+                data_id = 0
+                for index in range(start_id, end_id):
+                    self.id2dataset[index] = (dataset_id, data_id)
+                    data_id += 1
+                dataset_id += 1
+                assert data_id == num_frames
+            # assert data_id == self.dataset_len
+            # self.dataset = ConcatDataset(self.datasets)
+            # for dataset in self.datasets:
+            #     self.num_episodes += dataset.num_episodes
+            #     self.dataset_len += dataset.num_frames
             # self.dataset_len = self.dataset.num_frames
             print(f"data mix:{data_mix} has {self.num_episodes} episodes, {self.dataset_len} frames.")
         else:
@@ -1486,7 +1502,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                                   "observation.images.wrist"] # follow https://github.com/openvla/openvla/blob/main/prismatic/vla/datasets/rlds/oxe/configs.py
         self.stats = aggregate_multi_stats(self.datasets, self.dataset_names, self.max_action_dim) # Note: I modified this function
         # save_to_json(self.stats, os.path.join("/home/v-wangxiaofa/lzl/gcr_lerobot_2_fsdp/lerobot/stats", f"{cfg.data_mix}_stats.json"))
-        save_to_json(self.stats, os.path.join("/mnt/wangxiaofa/original_qw", f"{cfg.data_mix}_stats.json"))
+        # save_to_json(self.stats, os.path.join("/mnt/wangxiaofa/original_qw", f"{cfg.data_mix}_stats.json"))
         # print(f"Aggregated stats:{self.stats}")
         # update meta_features
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - meta features: {meta_features}")
@@ -1546,7 +1562,9 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                 break
             retry += 1
             if self.is_ft:
-                item = self.dataset[index]
+                dataset_id, data_id = self.id2dataset[index]
+                dataset = self.datasets[dataset_id]
+                item = dataset[data_id]
                 dataset_name = item["dataset_name"]
                 data_config = OXE_DATASET_CONFIGS[dataset_name]
                 image_obs_keys = data_config["image_obs_keys"]
@@ -1623,7 +1641,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
         if not exist_image_valide:
             sample_image = Image.fromarray(np.ones((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
         
-        sample_image = Image.fromarray(np.ones((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
+        # sample_image = Image.fromarray(np.ones((self.cfg.dataset.default_image_size, self.cfg.dataset.default_image_size, self.cfg.dataset.default_channel_size), dtype=np.uint8))  
         # print(sample_image)
         
         for new_key in key_to_pad:

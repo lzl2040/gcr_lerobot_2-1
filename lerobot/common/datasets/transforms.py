@@ -256,8 +256,8 @@ class ImageTransforms(Transform):
         n_subset = min(len(self.transforms), cfg.max_num_transforms)
         self.base_tf = v2.Resize(size=(cfg.img_size, cfg.img_size))
         if n_subset == 0 or not cfg.enable:
-            self.tf = v2.Identity()
-            # self.tf = self.base_tf
+            # self.tf = v2.Identity()
+            self.tf = self.base_tf
         else:
             self.tf = RandomSubsetApply(
                 # base_transforms=self.base_tf,

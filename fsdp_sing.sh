@@ -109,7 +109,7 @@ torchrun \
     --policy.type="qwen" \
     --output_dir="$FIXED_OUTPUT_DIR" \
     --dataset.repo_id="whatever" \
-    --dataset.image_transforms.enable=false \
+    --dataset.image_transforms.enable=true \
     --batch_size=$BATCH_SIZE \
     --gradient_accumulation_steps=$GRADIENT_ACC \
     --data_mix=$DATA_MIX \
@@ -129,4 +129,4 @@ torchrun \
     --wandb.project="fsdq_qwen_pi0_ft" \
     --job_name="$JOB_NAME" \
     --log_dir="/mnt/wangxiaofa/logs" \
-    # --resume=true
+    --resume=true
