@@ -541,8 +541,8 @@ class PaliGemmaWithExpertModel(PreTrainedModel):
         # self.kv_compress = nn.ModuleList([KVCompress(in_dim=4, out_dim=2) for _ in range(self.num_layers)])
         self.kv_repre = nn.ModuleList([KvRepresentation(hidden=128, in_head=[8, 4], out_head=2) for _ in range(self.num_layers)])
         
-        self.k_mask = [nn.Parameter(torch.ones(128*8*4)) for _ in range(self.num_layers)]
-        self.v_mask = [nn.Parameter(torch.ones(128*8*4)) for _ in range(self.num_layers)]
+        self.k_mask = nn.ParameterList([nn.Parameter(torch.ones(128*8*4)) for _ in range(self.num_layers)])
+        self.v_mask = nn.ParameterList([nn.Parameter(torch.ones(128*8*4)) for _ in range(self.num_layers)])
         
         # self.query_compress = nn.ModuleList([QueryCompression(in_dim=6, out_dim=4, hiddem_dim=128) for _ in range(self.num_layers)])
         # self.kv_compress = KVCompress(in_dim=4, out_dim=2)
