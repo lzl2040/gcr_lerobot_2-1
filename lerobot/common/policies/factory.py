@@ -158,9 +158,12 @@ def make_policy(
 
     if weight_pt_path:
         weights = torch.load(weight_pt_path, map_location="cpu")
-        if "model.paligemma_with_expert.qwen_expert.lm_head.weight" in weights:
-            del weights["model.paligemma_with_expert.qwen_expert.lm_head.weight"]
-            del weights["model.paligemma_with_expert.awa_model.lm_head.weight"]
+        key_to_remove = []
+        for k, v in weights.items():
+            if "awa_model.lm_head" in k or "qwen_expert.lm_head" in k:
+                key_to_remove.append(k)
+        for k in key_to_remove:
+            del weights[k]
         policy.load_state_dict(weights, strict=True)
         print(f"Load pt weights from:{weight_pt_path}")
         del weights

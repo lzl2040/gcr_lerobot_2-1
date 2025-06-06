@@ -15,6 +15,7 @@
 # limitations under the License.
 import abc
 from dataclasses import asdict, dataclass
+import bitsandbytes as bnb
 from pathlib import Path
 
 import draccus
@@ -65,6 +66,18 @@ class AdamConfig(OptimizerConfig):
 
 @OptimizerConfig.register_subclass("adamw")
 @dataclass
+# class AdamWConfig(OptimizerConfig):
+#     lr: float = 1e-3
+#     beta2_decay: float = -0.8
+#     eps: tuple[float | None, float] = (None, 0.001)
+#     weight_decay: float = 1e-2
+#     d: float = 1.0
+#     grad_clip_norm: float = 10.0
+    
+#     def build(self, params: dict) -> torch.optim.Optimizer:
+#         kwargs = asdict(self)
+#         kwargs.pop("grad_clip_norm")
+#         return torch.optim.Adafactor(params, **kwargs)
 class AdamWConfig(OptimizerConfig):
     lr: float = 1e-3
     betas: tuple[float, float] = (0.9, 0.999)
@@ -75,7 +88,9 @@ class AdamWConfig(OptimizerConfig):
     def build(self, params: dict) -> torch.optim.Optimizer:
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
-        return torch.optim.AdamW(params, **kwargs)
+        adam8bit = bnb.optim.Adam8bit(params, **kwargs)
+        return adam8bit
+        # return torch.optim.AdamW(params, **kwargs)
 
 
 @OptimizerConfig.register_subclass("sgd")

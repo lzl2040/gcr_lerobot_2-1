@@ -65,7 +65,7 @@ from PIL import Image
 from lerobot.common.constants import ACTION, OBS_ROBOT
 from lerobot.common.policies.normalize import Normalize, Unnormalize
 from lerobot.common.policies.pi0.configuration_qwen import QwenConfig
-from lerobot.common.policies.pi0.qwen_with_expert import (
+from lerobot.common.policies.pi0.qwen_with_expert_v1_1 import (
     PaliGemmaWithExpertConfig,
     PaliGemmaWithExpertModel,
 )
