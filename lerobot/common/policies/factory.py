@@ -78,6 +78,19 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         raise ValueError(f"Policy type '{policy_type}' is not available.")
 
 
+def pad_state_dict_with_mask(state_dict, model, k_mask_shape=(4096,), prefix='paligemma_with_expert'):
+    # 补全 k_mask
+    for i in range(model.model.paligemma_with_expert.num_layers):
+        k_key = f'{prefix}.k_mask.{i}'
+        v_key = f'{prefix}.v_mask.{i}'
+        
+        if k_key not in state_dict:
+            state_dict[k_key] = torch.ones(k_mask_shape, dtype=torch.float32)
+        if v_key not in state_dict:
+            state_dict[v_key] = torch.ones(k_mask_shape, dtype=torch.float32)
+    
+    return state_dict
+
 def make_policy(
     cfg: PreTrainedConfig,
     device: str | torch.device,
@@ -164,6 +177,7 @@ def make_policy(
                 key_to_remove.append(k)
         for k in key_to_remove:
             del weights[k]
+        weights = pad_state_dict_with_mask(weights, policy, prefix="model.paligemma_with_expert")
         policy.load_state_dict(weights, strict=True)
         print(f"Load pt weights from:{weight_pt_path}")
         del weights

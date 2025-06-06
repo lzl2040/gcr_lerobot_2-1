@@ -105,7 +105,7 @@ torchrun \
     --node_rank=$NODE_RANK \
     --master_addr=$MASTER_ADDR \
     --master_port=$MASTER_PORT \
-    lerobot/scripts/fsdp_train.py \
+    lerobot/scripts/fsdp_train_8bit_adam.py \
     --policy.type="qwen" \
     --output_dir="$FIXED_OUTPUT_DIR" \
     --dataset.repo_id="whatever" \
