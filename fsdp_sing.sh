@@ -109,7 +109,9 @@ torchrun \
     --policy.type="qwen" \
     --output_dir="$FIXED_OUTPUT_DIR" \
     --dataset.repo_id="whatever" \
-    --dataset.image_transforms.enable=false \
+    --dataset.image_transforms.enable=true \
+    --dataset.wrist_image_transforms.enable=true \
+    --dataset.wrist_image_transforms.is_primary=false \
     --batch_size=$BATCH_SIZE \
     --gradient_accumulation_steps=$GRADIENT_ACC \
     --data_mix=$DATA_MIX \

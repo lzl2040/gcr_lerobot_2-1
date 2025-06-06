@@ -210,12 +210,14 @@ def train(cfg: TrainPipelineConfig):
             step = sorted(steps)[-1] + 1
             seed += (step-1)
             
-    image_transforms = (ImageTransforms(cfg.dataset.image_transforms))
-    # image_transforms = None
+    image_transforms = ImageTransforms(cfg.dataset.image_transforms)
+    wrist_image_transforms = ImageTransforms(cfg.dataset.wrist_image_transforms)
     print(f"image transforms:{image_transforms}")
+    print(f"wrist image transforms:{wrist_image_transforms}")
     dataset = MultiDatasetforDistTraining(
         cfg=cfg, 
         image_transforms=image_transforms,
+        wrist_image_transforms=wrist_image_transforms,
         seed=seed,
         data_mix=cfg.data_mix,
         vla2root_json="vla2root.json",
@@ -235,8 +237,9 @@ def train(cfg: TrainPipelineConfig):
         cfg=cfg.policy,
         device="cpu",
         ds_meta=dataset.meta,
-        weight_pt_path="/mnt/wangxiaofa/original_qw/0526_testrun+03_df10_full_Prometheus/step80000.pt"
+        # weight_pt_path="/mnt/wangxiaofa/original_qw/0526_testrun+03_df10_full_Prometheus/step80000.pt"
         # weight_pt_path="/mnt/wangxiaofa/original_qw/0530_exp+04_df10_pt_full_ft_bridge/step35000.pt"
+        weight_pt_path="/mnt/wangxiaofa/original_qw/exp+01_0602_df100_full_ft_libero/step66000.pt"
     )
     
     # 统计模型参数量

@@ -440,6 +440,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         root: str | Path | None = None,
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
+        wrist_image_transforms: Callable | None = None,
         delta_timestamps: dict[list[float]] | None = None,
         tolerance_s: float = 1e-4,
         revision: str | None = None,
@@ -554,6 +555,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.repo_id = repo_id
         self.root = Path(root) if root else HF_LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
+        self.wrist_image_transforms = wrist_image_transforms
         self.delta_timestamps = delta_timestamps
         self.episodes = episodes
         self.tolerance_s = tolerance_s
@@ -856,7 +858,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         if self.image_transforms is not None:
             image_keys = self.meta.camera_keys
             for cam in image_keys:
-                item[cam] = self.image_transforms(item[cam])
+                if "wrist" in cam:
+                    item[cam] = self.wrist_image_transforms(item[cam])
+                else:
+                    item[cam] = self.image_transforms(item[cam])
 
         # Add task as a string
         task_idx = item["task_index"].item()
@@ -1333,7 +1338,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
 
 class MultiDatasetforDistTraining(torch.utils.data.Dataset):
-    def __init__(self, cfg, image_transforms, seed: int = 1000, data_mix: str = "toy", vla2root_json: str = None, banlance_weight=True, is_ft = False):
+    def __init__(self, cfg, image_transforms, wrist_image_transforms = None, seed: int = 1000, 
+                 data_mix: str = "toy", vla2root_json: str = None, banlance_weight=True, is_ft = False):
         """
         参数:
             cfg (TrainPipelineConfig): 训练配置文件
@@ -1414,6 +1420,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                     root=data_root,
                     delta_timestamps=delta_timestamps,
                     image_transforms=image_transforms,
+                    wrist_image_transforms=wrist_image_transforms,
                     video_backend=cfg.dataset.video_backend,
                     dataset_name=dataset_name,
                 )
@@ -1441,6 +1448,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                     data_id += 1
                 dataset_id += 1
                 assert data_id == num_frames
+                # print(self.id2dataset)
             # assert data_id == self.dataset_len
             # self.dataset = ConcatDataset(self.datasets)
             # for dataset in self.datasets:
@@ -1502,7 +1510,7 @@ class MultiDatasetforDistTraining(torch.utils.data.Dataset):
                                   "observation.images.wrist"] # follow https://github.com/openvla/openvla/blob/main/prismatic/vla/datasets/rlds/oxe/configs.py
         self.stats = aggregate_multi_stats(self.datasets, self.dataset_names, self.max_action_dim) # Note: I modified this function
         # save_to_json(self.stats, os.path.join("/home/v-wangxiaofa/lzl/gcr_lerobot_2_fsdp/lerobot/stats", f"{cfg.data_mix}_stats.json"))
-        # save_to_json(self.stats, os.path.join("/mnt/wangxiaofa/original_qw", f"{cfg.data_mix}_stats.json"))
+        save_to_json(self.stats, os.path.join("/mnt/wangxiaofa/original_qw", f"{cfg.data_mix}_stats.json"))
         # print(f"Aggregated stats:{self.stats}")
         # update meta_features
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] - meta features: {meta_features}")

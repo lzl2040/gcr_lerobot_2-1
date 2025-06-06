@@ -161,6 +161,56 @@ class ImageTransformConfig:
 
 @dataclass
 class ImageTransformsConfig:
+    enable: bool = False
+    max_num_transforms: int = 3
+    random_order: bool = False
+    img_size: int = 224
+    is_primary: bool = True  # ✅ 用于控制是否添加 crop_resize 和 rotate
+    tfs: dict[str, ImageTransformConfig] = field(init=False)  # 不通过 default_factory 设置，改为 post_init
+
+    def __post_init__(self):
+        self.tfs = {
+            "brightness": ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"brightness": (0.8, 1.2)},
+            ),
+            "contrast": ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"contrast": (0.8, 1.2)},
+            ),
+            "saturation": ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"saturation": (0.5, 1.5)},
+            ),
+            "hue": ImageTransformConfig(
+                weight=1.0,
+                type="ColorJitter",
+                kwargs={"hue": (-0.05, 0.05)},
+            ),
+            "sharpness": ImageTransformConfig(
+                weight=1.0,
+                type="SharpnessJitter",
+                kwargs={"sharpness": (0.5, 1.5)},
+            ),
+        }
+
+        if self.is_primary:
+            self.tfs["crop_resize"] = ImageTransformConfig(
+                weight=1.0,
+                type="RandomResizedCrop",
+                kwargs={"size": (200, 200), "scale": (0.9, 0.95), "ratio": (1.0, 1.0)},
+            )
+            self.tfs["rotate"] = ImageTransformConfig(
+                weight=1.0,
+                type="RandomRotate",
+                kwargs={"degrees": (-5, 5)},
+            )
+
+@dataclass
+class ImageTransformsConfig_Raw:
     """
     These transforms are all using standard torchvision.transforms.v2
     You can find out how these transformations affect images here:
